@@ -1,0 +1,46 @@
+syntax = "proto3";
+package certael.v1;
+
+option csharp_namespace = "Certael.Protocol.V1";
+
+message BootstrapTicketClaims {
+  string issuer = 1;
+  string audience = 2;
+  string ticket_id = 3;
+  string tenant_id = 4;
+  string game_id = 5;
+  string environment_id = 6;
+  string player_subject = 7;
+  string match_id = 8;
+  string authoritative_server_id = 9;
+  string build_id = 10;
+  string protection_profile = 11;
+  bytes ephemeral_public_key = 12;
+  int64 issued_at_unix = 13;
+  int64 not_before_unix = 14;
+  int64 expires_at_unix = 15;
+  uint32 protocol_min = 16;
+  uint32 protocol_max = 17;
+  repeated string capabilities = 18;
+}
+
+message SignedBootstrapTicket {
+  bytes claims = 1;
+  bytes signature = 2;
+  string key_id = 3;
+}
+
+message RedeemTicketRequest {
+  SignedBootstrapTicket ticket = 1;
+  bytes possession_signature = 2;
+  bytes challenge = 3;
+}
+
+message ActiveSession {
+  string session_id = 1;
+  int64 expires_at_unix = 2;
+  uint64 initial_sequence = 3;
+  bytes rule_pack_digest = 4;
+  bytes build_manifest_digest = 5;
+  repeated string required_capabilities = 6;
+}

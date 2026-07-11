@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>certaelctl</AssemblyName>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>certaelctl</ToolCommandName>
+    <PackageId>Certael.Cli</PackageId>
+  </PropertyGroup>
+  <ItemGroup><ProjectReference Include="../../server-sdk/Certael.Server/Certael.Server.csproj" /></ItemGroup>
+</Project>

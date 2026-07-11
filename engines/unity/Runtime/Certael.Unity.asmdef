@@ -1,0 +1,7 @@
+{
+  "name": "Certael.Unity",
+  "rootNamespace": "Certael.Unity",
+  "allowUnsafeCode": false,
+  "autoReferenced": true,
+  "noEngineReferences": false
+}

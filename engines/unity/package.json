@@ -1,0 +1,8 @@
+{
+  "name": "dev.certael.sdk",
+  "version": "0.1.0",
+  "displayName": "Certael SDK",
+  "description": "Client integration for authoritative Certael-protected games.",
+  "unity": "2022.3",
+  "license": "Apache-2.0"
+}

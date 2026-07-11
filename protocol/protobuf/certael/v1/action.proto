@@ -1,0 +1,31 @@
+syntax = "proto3";
+package certael.v1;
+
+option csharp_namespace = "Certael.Protocol.V1";
+
+message ActionEnvelope {
+  string session_id = 1;
+  uint64 sequence = 2;
+  bytes action_id = 3;
+  string action_type = 4;
+  uint32 schema_version = 5;
+  int64 client_monotonic_micros = 6;
+  bytes payload = 7;
+  bytes previous_action_digest = 8;
+  bytes possession_proof = 9;
+}
+
+enum ActionOutcome {
+  ACTION_OUTCOME_UNSPECIFIED = 0;
+  ACCEPTED = 1;
+  REJECTED = 2;
+  INDETERMINATE = 3;
+}
+
+message ActionResult {
+  bytes action_id = 1;
+  ActionOutcome outcome = 2;
+  string public_reason = 3;
+  bytes authoritative_response = 4;
+  uint64 authoritative_revision = 5;
+}

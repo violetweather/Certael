@@ -1,0 +1,37 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: certael
+      POSTGRES_PASSWORD: development-only
+      POSTGRES_DB: certael
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U certael"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes: ["postgres-data:/var/lib/postgresql/data"]
+    ports: ["127.0.0.1:5432:5432"]
+  redis:
+    image: redis:8-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports: ["127.0.0.1:6379:6379"]
+  nats:
+    image: nats:2.11-alpine
+    command: ["-js", "-sd", "/data"]
+  clickhouse:
+    image: clickhouse/clickhouse-server:25-alpine
+  api:
+    build:
+      context: ../..
+      dockerfile: backend/Certael.Api/Dockerfile
+    environment:
+      ASPNETCORE_URLS: http://+:8080
+      ASPNETCORE_ENVIRONMENT: Development
+      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=certael;Username=certael;Password=development-only
+      ConnectionStrings__Redis: redis:6379,abortConnect=false
+    ports: ["8080:8080"]
+    depends_on:
+      postgres: { condition: service_healthy }
+volumes:
+  postgres-data:

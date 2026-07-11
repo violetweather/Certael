@@ -1,0 +1,15 @@
+<Solution>
+  <Folder Name="/server-sdk/">
+    <Project Path="server-sdk/Certael.Server/Certael.Server.csproj" />
+  </Folder>
+  <Folder Name="/backend/">
+    <Project Path="backend/Certael.Api/Certael.Api.csproj" />
+    <Project Path="backend/Certael.Persistence/Certael.Persistence.csproj" />
+  </Folder>
+  <Folder Name="/cli/">
+    <Project Path="cli/Certael.Cli/Certael.Cli.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Certael.Server.Tests/Certael.Server.Tests.csproj" />
+  </Folder>
+</Solution>

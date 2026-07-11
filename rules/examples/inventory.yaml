@@ -1,0 +1,43 @@
+apiVersion: certael.dev/v1
+kind: RulePack
+metadata:
+  id: example.inventory
+  version: 1.0.0
+  gameId: example
+  environmentId: development
+compatibility:
+  protocolMinimum: 1
+  protocolMaximum: 1
+actions:
+  inventory.craft:
+    requestSchema: example.CraftItemRequest
+rules:
+  - id: inventory.craft.positive_quantity
+    version: 1.0.0
+    provenance: ClientClaim
+    actionType: inventory.craft
+    publicFailureReason: INVALID_QUANTITY
+    maximumRiskContribution: 0
+    expression:
+      logical:
+        operator: All
+        operands:
+          - compare:
+              operator: Greater
+              left: { field: { source: Request, path: quantity } }
+              right: { constant: 0 }
+          - compare:
+              operator: LessOrEqual
+              left: { field: { source: Request, path: quantity } }
+              right: { constant: 100 }
+  - id: inventory.craft.revision
+    version: 1.0.0
+    provenance: AuthoritativeState
+    actionType: inventory.craft
+    publicFailureReason: STATE_CHANGED
+    maximumRiskContribution: 60
+    expression:
+      compare:
+        operator: Equal
+        left: { field: { source: AuthoritativeState, path: inventory.revision } }
+        right: { field: { source: Request, path: expected_revision } }

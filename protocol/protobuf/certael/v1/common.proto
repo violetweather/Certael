@@ -1,0 +1,26 @@
+syntax = "proto3";
+package certael.v1;
+
+option csharp_namespace = "Certael.Protocol.V1";
+
+enum Provenance {
+  PROVENANCE_UNSPECIFIED = 0;
+  CLIENT_CLAIM = 1;
+  CLIENT_TELEMETRY = 2;
+  CLIENT_INTEGRITY_OBSERVATION = 3;
+  PLATFORM_ATTESTATION = 4;
+  NETWORK_OBSERVATION = 5;
+  GAME_SERVER_OBSERVATION = 6;
+  AUTHORITATIVE_STATE = 7;
+  CERTAEL_DERIVED = 8;
+  OPERATOR_DECISION = 9;
+}
+
+message ProtocolVersion { uint32 major = 1; uint32 minor = 2; }
+
+message EvidenceField {
+  string name = 1;
+  bytes value = 2;
+  Provenance provenance = 3;
+  bool sensitive = 4;
+}

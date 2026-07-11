@@ -1,0 +1,10 @@
+{
+  "FileVersion": 3,
+  "Version": 1,
+  "VersionName": "0.1.0",
+  "FriendlyName": "Certael",
+  "Description": "Client integration for authoritative Certael-protected games.",
+  "Category": "Security",
+  "CanContainContent": false,
+  "Modules": [{ "Name": "Certael", "Type": "Runtime", "LoadingPhase": "Default" }]
+}

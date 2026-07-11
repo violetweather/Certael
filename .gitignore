@@ -1,0 +1,13 @@
+**/bin/
+**/obj/
+**/target/
+.idea/
+.vscode/
+.DS_Store
+.env
+*.user
+*.suo
+*.pfx
+*.key
+coverage/
+artifacts/
