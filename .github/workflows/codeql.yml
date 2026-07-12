@@ -14,11 +14,11 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with: { persist-credentials: false }
-      - uses: github/codeql-action/init@1ad29ea4a422cce9a242a9fae469541dcd08addc
+      - uses: github/codeql-action/init@99df26d4f13ea111d4ec1a7dddef6063f76b97e9
         with: { languages: csharp, actions }
-      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1
         with: { dotnet-version: 10.0.x }
       - run: dotnet build Certael.slnx -c Release --warnaserror
-      - uses: github/codeql-action/analyze@1ad29ea4a422cce9a242a9fae469541dcd08addc
+      - uses: github/codeql-action/analyze@99df26d4f13ea111d4ec1a7dddef6063f76b97e9

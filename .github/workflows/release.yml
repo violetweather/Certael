@@ -35,7 +35,7 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with: { persist-credentials: false }
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
         with:
@@ -56,9 +56,9 @@ jobs:
           else
             cp "target/${{ matrix.target }}/release/libcertael_c_api.a" "artifacts/certael-native-${{ matrix.artifact }}/lib/"
           fi
-      - uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661
+      - uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a
         with: { subject-path: "artifacts/certael-native-${{ matrix.artifact }}/**" }
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: certael-native-${{ matrix.artifact }}
           path: artifacts/certael-native-${{ matrix.artifact }}
@@ -71,9 +71,9 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with: { persist-credentials: false }
-      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1
         with: { dotnet-version: 10.0.x }
       - run: dotnet test Certael.slnx -c Release --warnaserror
       - run: dotnet pack server-sdk/Certael.Server/Certael.Server.csproj -c Release -o artifacts
@@ -83,9 +83,9 @@ jobs:
       - run: |
           dotnet tool install Microsoft.Sbom.DotNetTool --version 4.1.5 --tool-path .tools
           .tools/sbom-tool generate -b artifacts -bc . -pn Certael -pv "${GITHUB_REF_NAME#v}" -ps Certael -nsb "https://github.com/${GITHUB_REPOSITORY}"
-      - uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661
+      - uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a
         with: { subject-path: "artifacts/**" }
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with: { name: certael-managed, path: artifacts, if-no-files-found: error }
 
   godot:
@@ -115,7 +115,7 @@ jobs:
             artifact: macos-x86_64
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with: { persist-credentials: false }
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
         with: { toolchain: 1.97.0, targets: "${{ matrix.target }}" }
@@ -137,7 +137,7 @@ jobs:
           cd engines/godot
           extra=(); [[ "${{ runner.os }}" == "Windows" ]] && extra+=(use_mingw=no)
           scons platform=${{ matrix.platform }} arch=${{ matrix.arch }} target=template_release "${extra[@]}" -j2
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: certael-godot-${{ matrix.artifact }}
           path: engines/godot/addons/certael/bin
@@ -151,13 +151,13 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with: { persist-credentials: false }
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c
+      - uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0
         with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
       - id: build
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a
         with:
           context: .
           file: backend/Certael.Api/Dockerfile
@@ -167,7 +167,7 @@ jobs:
           build-args: SOURCE_REVISION=${{ github.sha }}
           provenance: mode=max
           sbom: true
-      - uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661
+      - uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a
         with:
           subject-name: ghcr.io/${{ github.repository_owner }}/certael-api
           subject-digest: ${{ steps.build.outputs.digest }}
@@ -185,9 +185,9 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with: { persist-credentials: false }
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with: { path: downloaded }
       - name: Assemble engine SDKs
         run: |
@@ -233,7 +233,7 @@ jobs:
           for artifact in release/*; do
             cosign sign-blob --yes --bundle "${artifact}.sigstore.json" "$artifact"
           done
-      - uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661
+      - uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a
         with: { subject-path: "release/**" }
       - name: Publish pre-release
         env: { GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
