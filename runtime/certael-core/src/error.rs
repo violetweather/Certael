@@ -18,6 +18,10 @@ pub enum CertaelError {
     Cryptography,
     #[error("invalid argument")]
     InvalidArgument,
+    #[error("action envelope is invalid")]
+    InvalidEnvelope,
+    #[error("action envelope is not canonical")]
+    NonCanonicalEnvelope,
 }
 
 pub type Result<T> = core::result::Result<T, CertaelError>;

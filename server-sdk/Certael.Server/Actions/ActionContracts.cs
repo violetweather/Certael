@@ -15,7 +15,11 @@ public sealed record AuthorizedAction<TRequest>(
     TRequest Request,
     ReadOnlyMemory<byte> RawPayload,
     ReadOnlyMemory<byte> PreviousDigest,
-    ReadOnlyMemory<byte> PossessionProof);
+    ReadOnlyMemory<byte> PossessionProof,
+    uint ProtocolMajor = 1,
+    uint ProtocolMinor = 0,
+    string RequestSchema = "legacy.unspecified",
+    ReadOnlyMemory<byte> SessionBindingDigest = default);
 
 public sealed record ActionResult<TResponse>(
     Guid ActionId,

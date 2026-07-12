@@ -3,6 +3,14 @@
   "version": "0.1.0",
   "displayName": "Certael SDK",
   "description": "Client integration for authoritative Certael-protected games.",
-  "unity": "2022.3",
-  "license": "Apache-2.0"
+  "unity": "6000.3",
+  "license": "Apache-2.0",
+  "documentationUrl": "https://github.com/violetweather/Certael/tree/main/docs",
+  "samples": [
+    {
+      "displayName": "Secure Bootstrap",
+      "description": "Creates the ephemeral session key used by an authenticated game connection.",
+      "path": "Samples~/SecureBootstrap"
+    }
+  ]
 }

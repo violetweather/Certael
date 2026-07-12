@@ -17,7 +17,9 @@ depend on the local container environment.
 
 ## Native runtime is missing
 
-- Build with `cargo build --release -p certael-c-api`.
+- Prefer a verified prebuilt engine package. For a source build, run
+  `./scripts/build.sh native --configuration Release` or
+  `.\scripts\build.ps1 native -Configuration Release`.
 - Confirm library architecture matches the editor/player architecture.
 - Verify engine import/build rules include the library in packaged output.
 - Check platform code signing and dependent runtime libraries.
@@ -29,10 +31,10 @@ stage the runtime dependency if `Certael.Build.cs` paths are wrong.
 
 ## Session activation fails
 
-Verify that binding JSON uses snake_case fields exactly as documented, includes a
-future `expires_at_unix`, and contains non-empty session/game/environment/match/
-build IDs. Activate only after successful redemption and use the returned initial
-sequence.
+Verify that the typed binding has a future expiry, a 32-byte binding digest, the
+returned initial sequence/protocol range/protection profile, and non-empty
+session/game/environment/match/build IDs. Activate only after successful
+redemption.
 
 ## Ticket redemption is rejected
 
@@ -41,6 +43,7 @@ sequence.
 | `UNKNOWN_SIGNING_KEY` | ticket key ID differs from the configured verifier |
 | `INVALID_SIGNATURE` | ticket changed, wrong key, or corrupt encoding |
 | `INVALID_CLAIMS` | malformed ticket claims |
+| `SIGNING_KEY_SCOPE_MISMATCH` | key metadata is not valid for this tenant/environment |
 | `ISSUER_OR_AUDIENCE_MISMATCH` | API environments or configuration mixed |
 | `TICKET_EXPIRED_OR_NOT_YET_VALID` | 60-second window elapsed or severe clock skew |
 | `PROOF_KEY_MISMATCH` | different runtime/key answered the challenge |
@@ -58,9 +61,15 @@ and should be cryptographically random and single-use.
 | `INVALID_SESSION` | session not persisted or wrong environment |
 | `SESSION_EXPIRED` | renewal timing and server clocks |
 | `SESSION_BINDING_MISMATCH` | game/environment/match/server/build mismatch |
+| `PROTOCOL_NOT_PERMITTED` | envelope protocol is outside the ticket/session range |
 | `SEQUENCE_OUT_OF_RANGE` | wrong initial sequence or exhausted policy range |
 | `INVALID_POSSESSION_PROOF` | canonical encoding or wrong ephemeral key |
 | `REPLAY_OR_REORDER` | duplicate, concurrent client runtime, or reordered transport |
+| `SEQUENCE_GAP` | a sequence was skipped; rebootstrap rather than guessing state |
+| `ACTION_CHAIN_MISMATCH` | previous digest does not match the last consumed action |
+| `ACTION_RATE_LIMITED` | action exceeded its signed protection-profile rate policy |
+| `SCHEMA_MISMATCH` | action payload schema/version differs from its registered policy |
+| `ACTION_NOT_REGISTERED` | signed protection profile does not register this action type |
 | game-specific reason | rule inputs and authoritative state |
 
 Do not share one runtime across multiple active sessions or create multiple

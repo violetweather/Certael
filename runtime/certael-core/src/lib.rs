@@ -7,7 +7,9 @@
 mod action;
 mod error;
 mod session;
+mod verify;
 
 pub use action::{ActionEnvelope, ActionSequencer};
 pub use error::{CertaelError, Result};
 pub use session::{EphemeralIdentity, SessionBinding, SessionState};
+pub use verify::{verify_action, VerifiedAction, VerifiedSession};

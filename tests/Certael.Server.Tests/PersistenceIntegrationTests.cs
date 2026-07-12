@@ -35,16 +35,17 @@ public sealed class PersistenceIntegrationTests
             "server", "build", DateTimeOffset.UtcNow.AddMinutes(30), 1, 1000, new byte[32]);
         var sessions = new PostgresSessionStore(dataSource);
         await sessions.CreateAsync(session, token);
-        SessionAuthorization? persistedSession = await sessions.FindAsync(session.SessionId, token);
+        await sessions.CreateAsync(session with { SessionId = "session-b", TenantId = "tenant-b" }, token);
+        SessionAuthorization? persistedSession = await sessions.FindAsync("tenant-a", session.SessionId, token);
         Assert.NotNull(persistedSession);
         Assert.Equal(session.SessionId, persistedSession.SessionId);
         Assert.Equal(session.TenantId, persistedSession.TenantId);
         Assert.Equal(session.EphemeralPublicKey.ToArray(), persistedSession.EphemeralPublicKey.ToArray());
         DateTimeOffset renewedExpiry = DateTimeOffset.UtcNow.AddHours(1);
-        Assert.False(await sessions.RenewAsync("session-a", "wrong-server", renewedExpiry, token));
-        Assert.True(await sessions.RenewAsync("session-a", "server", renewedExpiry, token));
+        Assert.False(await sessions.RenewAsync("tenant-a", "session-a", "wrong-server", renewedExpiry, token));
+        Assert.True(await sessions.RenewAsync("tenant-a", "session-a", "server", renewedExpiry, token));
         Assert.Equal(renewedExpiry.ToUnixTimeSeconds(),
-            (await sessions.FindAsync("session-a", token))!.ExpiresAt.ToUnixTimeSeconds());
+            (await sessions.FindAsync("tenant-a", "session-a", token))!.ExpiresAt.ToUnixTimeSeconds());
 
         await using NpgsqlConnection connection = await dataSource.OpenConnectionAsync(token);
         await using NpgsqlTransaction transaction = await connection.BeginTransactionAsync(token);
@@ -74,10 +75,10 @@ public sealed class PersistenceIntegrationTests
         await outboxReader.DisposeAsync();
 
         var publisher = new RecordingPublisher();
-        Assert.Equal(1, await new PostgresOutboxDispatcher(dataSource, publisher).DispatchBatchAsync(10, token));
+        Assert.Equal(1, await new PostgresOutboxDispatcher(dataSource, publisher, "tenant-a").DispatchBatchAsync(10, token));
         Assert.Single(publisher.Messages);
         Assert.Equal(actionId, publisher.Messages[0].ActionId);
-        Assert.Equal(0, await new PostgresOutboxDispatcher(dataSource, publisher).DispatchBatchAsync(10, token));
+        Assert.Equal(0, await new PostgresOutboxDispatcher(dataSource, publisher, "tenant-a").DispatchBatchAsync(10, token));
 
         await using (NpgsqlConnection duplicateConnection = await dataSource.OpenConnectionAsync(token))
         await using (NpgsqlTransaction duplicateTransaction = await duplicateConnection.BeginTransactionAsync(token))
@@ -117,9 +118,9 @@ public sealed class PersistenceIntegrationTests
 
         var actionResults = new PostgresActionResultStore(dataSource);
         var result = ActionResult<string>.Accept(actionId, "created", 1);
-        await actionResults.StoreAsync("session-a", result, token);
-        Assert.Equal(result, await actionResults.FindAsync<string>("session-a", actionId, token));
-        Assert.Null(await actionResults.FindAsync<string>("other-session", actionId, token));
+        await actionResults.StoreAsync("tenant-a", "session-a", result, token);
+        Assert.Equal(result, await actionResults.FindAsync<string>("tenant-a", "session-a", actionId, token));
+        Assert.Null(await actionResults.FindAsync<string>("tenant-a", "other-session", actionId, token));
 
         Finding finding = FindingFor("tenant-a", "player");
         var engine = new VerdictEngine(TimeProvider.System);
@@ -131,6 +132,7 @@ public sealed class PersistenceIntegrationTests
         Assert.Null(await evidence.FindAsync("tenant-b", verdict.VerdictId, token));
         await evidence.DeletePlayerAsync("tenant-a", "player", token);
         Assert.Null(await evidence.FindAsync("tenant-a", verdict.VerdictId, token));
+        await AssertRestrictedRoleRls(dataSource, token);
     }
 
     [Fact]
@@ -144,8 +146,12 @@ public sealed class PersistenceIntegrationTests
         string prefix = "test-" + Guid.NewGuid().ToString("N");
         var tickets = new RedisTicketRedemptionStore(redis, prefix);
         Guid id = Guid.NewGuid();
-        Assert.True(await tickets.TryRedeemAsync(id, DateTimeOffset.UtcNow.AddMinutes(1), token));
-        Assert.False(await tickets.TryRedeemAsync(id, DateTimeOffset.UtcNow.AddMinutes(1), token));
+        Assert.True(await tickets.TryRedeemAsync("tenant-a", "test", id,
+            DateTimeOffset.UtcNow.AddMinutes(1), token));
+        Assert.False(await tickets.TryRedeemAsync("tenant-a", "test", id,
+            DateTimeOffset.UtcNow.AddMinutes(1), token));
+        Assert.True(await tickets.TryRedeemAsync("tenant-b", "test", id,
+            DateTimeOffset.UtcNow.AddMinutes(1), token));
 
         var sequences = new RedisSequenceStore(redis, TimeSpan.FromMinutes(1), prefix);
         byte[] zero = new byte[32];
@@ -153,10 +159,16 @@ public sealed class PersistenceIntegrationTests
         byte[] second = SHA256.HashData("second"u8);
         var policy = new ActionAdmissionPolicy(10, TimeSpan.FromMinutes(1));
         DateTimeOffset now = DateTimeOffset.UtcNow;
-        Assert.True((await sequences.TryAdmitAsync(new("session", "test", 10, zero, first, now), policy, token)).Allowed);
-        Assert.Equal("REPLAY_OR_REORDER", (await sequences.TryAdmitAsync(new("session", "test", 10, first, second, now), policy, token)).PublicReason);
-        Assert.Equal("REPLAY_OR_REORDER", (await sequences.TryAdmitAsync(new("session", "test", 9, first, second, now), policy, token)).PublicReason);
-        Assert.True((await sequences.TryAdmitAsync(new("session", "test", 11, first, second, now), policy, token)).Allowed);
+        Assert.True((await sequences.TryAdmitAsync(new("session", "test", 10, zero, first, now,
+            InitialSequence: 10), policy, token)).Allowed);
+        Assert.Equal("REPLAY_OR_REORDER", (await sequences.TryAdmitAsync(new("session", "test", 10,
+            first, second, now, InitialSequence: 10), policy, token)).PublicReason);
+        Assert.Equal("REPLAY_OR_REORDER", (await sequences.TryAdmitAsync(new("session", "test", 9,
+            first, second, now, InitialSequence: 10), policy, token)).PublicReason);
+        Assert.Equal("SEQUENCE_GAP", (await sequences.TryAdmitAsync(new("session", "test", 12,
+            first, second, now, InitialSequence: 10), policy, token)).PublicReason);
+        Assert.True((await sequences.TryAdmitAsync(new("session", "test", 11, first, second, now,
+            InitialSequence: 10), policy, token)).Allowed);
     }
 
     [Fact]
@@ -192,7 +204,7 @@ public sealed class PersistenceIntegrationTests
         ActiveSessionResponse? active = await response.Content.ReadFromJsonAsync<ActiveSessionResponse>(token);
         Assert.NotNull(active);
         PostgresSessionStore store = factory.Services.GetRequiredService<PostgresSessionStore>();
-        SessionAuthorization? persisted = await store.FindAsync(active.SessionId, token);
+        SessionAuthorization? persisted = await store.FindAsync("api-tenant", active.SessionId, token);
         Assert.NotNull(persisted);
         Assert.Equal("api-tenant", persisted.TenantId);
         Assert.Equal("api-match", persisted.MatchId);
@@ -203,6 +215,35 @@ public sealed class PersistenceIntegrationTests
         await using NpgsqlCommand command = source.CreateCommand(
             "TRUNCATE certael_action_results, certael_outbox, certael_evidence, certael_sessions CASCADE");
         await command.ExecuteNonQueryAsync(token);
+    }
+
+    private static async Task AssertRestrictedRoleRls(NpgsqlDataSource source, CancellationToken token)
+    {
+        await using (NpgsqlCommand setup = source.CreateCommand("""
+            DO $$ BEGIN
+              IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='certael_rls_test') THEN
+                CREATE ROLE certael_rls_test NOLOGIN NOSUPERUSER NOBYPASSRLS;
+              END IF;
+            END $$;
+            GRANT USAGE ON SCHEMA public TO certael_rls_test;
+            GRANT SELECT, UPDATE ON certael_sessions TO certael_rls_test;
+            """))
+            await setup.ExecuteNonQueryAsync(token);
+
+        await using NpgsqlConnection connection = await source.OpenConnectionAsync(token);
+        await using NpgsqlTransaction transaction = await connection.BeginTransactionAsync(token);
+        await using (var role = new NpgsqlCommand("SET LOCAL ROLE certael_rls_test", connection, transaction))
+            await role.ExecuteNonQueryAsync(token);
+        await using (var tenant = new NpgsqlCommand(
+            "SELECT set_config('certael.tenant_id','tenant-a',true)", connection, transaction))
+            await tenant.ExecuteNonQueryAsync(token);
+        await using (var read = new NpgsqlCommand("SELECT count(*) FROM certael_sessions", connection, transaction))
+            Assert.Equal(1L, (long)(await read.ExecuteScalarAsync(token))!);
+        await using var crossWrite = new NpgsqlCommand(
+            "UPDATE certael_sessions SET tenant_id='tenant-b' WHERE session_id='session-a'", connection, transaction);
+        PostgresException exception = await Assert.ThrowsAsync<PostgresException>(async () =>
+            await crossWrite.ExecuteNonQueryAsync(token));
+        Assert.Equal("42501", exception.SqlState);
     }
 
     private static Finding FindingFor(string tenant, string player) =>

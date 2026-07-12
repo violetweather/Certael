@@ -16,23 +16,26 @@ public interface IOutboxPublisher
 /// Publishes at least once. Consumers must deduplicate by EventId. Rows are
 /// claimed with SKIP LOCKED so replicas can dispatch concurrently.
 /// </summary>
-public sealed class PostgresOutboxDispatcher(NpgsqlDataSource dataSource, IOutboxPublisher publisher)
+public sealed class PostgresOutboxDispatcher(
+    NpgsqlDataSource dataSource, IOutboxPublisher publisher, string tenantId)
 {
     public async Task<int> DispatchBatchAsync(int batchSize, CancellationToken cancellationToken = default)
     {
         if (batchSize is < 1 or > 1000) throw new ArgumentOutOfRangeException(nameof(batchSize));
         await using NpgsqlConnection connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using NpgsqlTransaction transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await using (var tenant = new NpgsqlCommand("SELECT set_config('certael.tenant_id', $1, true)", connection, transaction))
+        { tenant.Parameters.AddWithValue(tenantId); await tenant.ExecuteNonQueryAsync(cancellationToken); }
         const string select = """
             SELECT outbox_id, tenant_id, game_id, environment_id, session_id, action_id,
                    event_type, schema_version, payload, occurred_at
-            FROM certael_outbox WHERE published_at IS NULL
-            ORDER BY occurred_at, outbox_id FOR UPDATE SKIP LOCKED LIMIT $1
+            FROM certael_outbox WHERE tenant_id=$1 AND published_at IS NULL
+            ORDER BY occurred_at, outbox_id FOR UPDATE SKIP LOCKED LIMIT $2
             """;
         var messages = new List<OutboxMessage>(batchSize);
         await using (var command = new NpgsqlCommand(select, connection, transaction))
         {
-            command.Parameters.AddWithValue(batchSize);
+            command.Parameters.AddWithValue(tenantId); command.Parameters.AddWithValue(batchSize);
             await using NpgsqlDataReader reader = await command.ExecuteReaderAsync(cancellationToken);
             while (await reader.ReadAsync(cancellationToken))
                 messages.Add(new OutboxMessage(reader.GetGuid(0), reader.GetString(1), reader.GetString(2),

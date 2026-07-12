@@ -25,7 +25,8 @@ public sealed class RulePackLifecycleTests
     {
         using ECDsa key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
         var compiler = new RulePackCompiler(key, "key");
-        var store = new RulePackLifecycleStore(TimeProvider.System);
+        var store = new RulePackLifecycleStore(TimeProvider.System,
+            new RulePackVerifier(new Dictionary<string, ECDsa> { ["key"] = key }));
         SignedRulePack first = compiler.CompileAndSign(Document("1.0.0", RuleDataProvenance.AuthoritativeState, 80));
         SignedRulePack second = compiler.CompileAndSign(Document("1.1.0", RuleDataProvenance.AuthoritativeState, 80));
         store.AddDraft(first, "author");
@@ -56,9 +57,16 @@ public sealed class RulePackLifecycleTests
         using ECDsa key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
         var compiler = new RulePackCompiler(key, "key");
         SignedRulePack pack = compiler.CompileAndSign(Document("1.0.0", RuleDataProvenance.AuthoritativeState, 80));
-        var store = new RulePackLifecycleStore(TimeProvider.System);
+        var store = new RulePackLifecycleStore(TimeProvider.System,
+            new RulePackVerifier(new Dictionary<string, ECDsa> { ["key"] = key }));
         store.AddDraft(pack, "author");
         Assert.Throws<RuleLifecycleException>(() => store.AddDraft(pack, "author"));
+
+        SignedRulePack tampered = pack with { Signature = new byte[pack.Signature.Length] };
+        Assert.Throws<RuleLifecycleException>(() =>
+            new RulePackLifecycleStore(TimeProvider.System,
+                new RulePackVerifier(new Dictionary<string, ECDsa> { ["key"] = key }))
+            .AddDraft(tampered, "author"));
 
         RulePackDocument duplicate = Document("1.0.1", RuleDataProvenance.AuthoritativeState, 80);
         duplicate = duplicate with { Rules = [duplicate.Rules[0], duplicate.Rules[0]] };

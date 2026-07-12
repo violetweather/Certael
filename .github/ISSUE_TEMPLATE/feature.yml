@@ -1,0 +1,19 @@
+name: Feature request
+description: Propose a scoped improvement or integration.
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: textarea
+    attributes: { label: Problem, description: Describe the integration or security problem, not only a preferred implementation. }
+    validations: { required: true }
+  - type: textarea
+    attributes: { label: Proposed behavior }
+    validations: { required: true }
+  - type: textarea
+    attributes: { label: Security boundary, description: Explain which data and systems are trusted or untrusted. }
+    validations: { required: true }
+  - type: dropdown
+    attributes:
+      label: Compatibility impact
+      options: [Additive, Protocol-minor capability, Breaking protocol change, Unknown]
+    validations: { required: true }

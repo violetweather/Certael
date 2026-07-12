@@ -23,7 +23,7 @@ jobs:
           dotnet-version: 10.0.x
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
         with:
-          toolchain: stable
+          toolchain: 1.97.0
           components: clippy, rustfmt
       - name: Rust format
         run: cargo fmt --all --check
@@ -45,8 +45,18 @@ jobs:
             cc -std=c17 -Wall -Wextra -Werror -Iruntime/certael-c-api/include tests/native/c_abi_smoke.c target/release/libcertael_c_api.a -ldl -lpthread -lm -o /tmp/certael-abi
           fi
           /tmp/certael-abi
+      - name: C++ wrapper smoke (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          if [[ "${{ runner.os }}" == "macOS" ]]; then
+            clang++ -std=c++20 -Wall -Wextra -Werror -Iruntime/certael-c-api/include tests/native/cpp_abi_smoke.cpp target/release/libcertael_c_api.a -framework Security -framework CoreFoundation -o /tmp/certael-cpp
+          else
+            c++ -std=c++20 -Wall -Wextra -Werror -Iruntime/certael-c-api/include tests/native/cpp_abi_smoke.cpp target/release/libcertael_c_api.a -ldl -lpthread -lm -o /tmp/certael-cpp
+          fi
+          /tmp/certael-cpp
 
-  cross-check:
+  protocol-conformance:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -54,10 +64,14 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
         with:
-          toolchain: stable
-          targets: x86_64-pc-windows-gnu,x86_64-unknown-linux-gnu
-      - run: cargo check --workspace --target x86_64-pc-windows-gnu
-      - run: cargo check --workspace --target x86_64-unknown-linux-gnu
+          toolchain: 1.97.0
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Rust golden vector
+        run: cargo run --locked --release -p certael-core --example interop_vector
+      - name: .NET protocol vectors
+        run: dotnet test tests/Certael.Server.Tests/Certael.Server.Tests.csproj -c Release --filter "FullyQualifiedName~ProtocolV1Tests|FullyQualifiedName~BootstrapTicketTests"
 
   persistence-integration:
     runs-on: ubuntu-24.04
@@ -66,7 +80,7 @@ jobs:
         image: postgres:17-alpine
         env:
           POSTGRES_USER: certael
-          POSTGRES_PASSWORD: development-only
+          POSTGRES_PASSWORD: ${{ github.run_id }}-${{ github.run_attempt }}-certael-ci
           POSTGRES_DB: certael
         ports: ["5432:5432"]
         options: >-
@@ -76,7 +90,7 @@ jobs:
         image: redis:8-alpine
         ports: ["6379:6379"]
     env:
-      CERTAEL_TEST_POSTGRES: Host=127.0.0.1;Port=5432;Database=certael;Username=certael;Password=development-only
+      CERTAEL_TEST_POSTGRES: Host=127.0.0.1;Port=5432;Database=certael;Username=certael;Password=${{ github.run_id }}-${{ github.run_attempt }}-certael-ci
       CERTAEL_TEST_REDIS: 127.0.0.1:6379,abortConnect=false
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -86,3 +100,22 @@ jobs:
         with:
           dotnet-version: 10.0.x
       - run: dotnet test Certael.slnx -c Release --filter Category=Integration --warnaserror
+
+  dependency-audit:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: 10.0.x
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
+        with:
+          toolchain: 1.97.0
+      - name: RustSec audit
+        run: |
+          cargo install cargo-audit --locked --version 0.22.2
+          cargo audit
+      - name: NuGet vulnerability audit
+        run: dotnet list Certael.slnx package --vulnerable --include-transitive

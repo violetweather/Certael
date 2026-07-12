@@ -46,6 +46,7 @@ pub struct SessionBinding {
     pub match_id: String,
     pub build_id: String,
     pub expires_at_unix: i64,
+    pub binding_digest: [u8; 32],
 }
 
 pub struct SessionState {
@@ -71,6 +72,7 @@ impl SessionState {
             || binding.environment_id.is_empty()
             || binding.match_id.is_empty()
             || binding.build_id.is_empty()
+            || binding.binding_digest == [0; 32]
         {
             return Err(CertaelError::InvalidArgument);
         }

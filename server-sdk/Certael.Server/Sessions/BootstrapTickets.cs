@@ -1,6 +1,5 @@
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
-using System.Text.Json;
 using NSec.Cryptography;
 
 namespace Certael.Server.Sessions;
@@ -26,51 +25,158 @@ public sealed record BootstrapTicketClaims(
 
 public sealed record SignedBootstrapTicket(byte[] Claims, byte[] Signature, string KeyId);
 
-public sealed class BootstrapTicketSigner(ECDsa signingKey, string keyId)
+public sealed record BootstrapSignature(string KeyId, byte[] Signature);
+
+/// <summary>
+/// Production implementations may delegate signing to a KMS or HSM. Private
+/// key bytes do not need to enter the Certael process.
+/// </summary>
+public interface IBootstrapSigningProvider
 {
-    private static readonly JsonSerializerOptions Json = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+    BootstrapSignature Sign(ReadOnlyMemory<byte> domainSeparatedClaims,
+        string tenantId, string environmentId, DateTimeOffset now);
+}
+
+public sealed record BootstrapSigningKey(
+    string KeyId, ECDsa Key, DateTimeOffset NotBefore, DateTimeOffset NotAfter,
+    bool Revoked = false, string Usage = "ticket-signing",
+    string TenantId = "*", string EnvironmentId = "*");
+
+public sealed class BootstrapSigningKeyRing : IDisposable
+{
+    private readonly IReadOnlyDictionary<string, BootstrapSigningKey> _keys;
+    public string ActiveKeyId { get; }
+
+    public BootstrapSigningKeyRing(IEnumerable<BootstrapSigningKey> keys, string activeKeyId)
+    {
+        BootstrapSigningKey[] materialized = keys.ToArray();
+        if (materialized.Length == 0 || materialized.Any(key => string.IsNullOrWhiteSpace(key.KeyId)
+            || key.KeyId.Length > 128 || key.NotAfter <= key.NotBefore
+            || key.Usage != "ticket-signing" || string.IsNullOrWhiteSpace(key.TenantId)
+            || string.IsNullOrWhiteSpace(key.EnvironmentId))
+            || materialized.Select(key => key.KeyId).Distinct(StringComparer.Ordinal).Count() != materialized.Length)
+            throw new ArgumentException("Signing key ring is invalid.", nameof(keys));
+        _keys = materialized.ToDictionary(key => key.KeyId, StringComparer.Ordinal);
+        ActiveKeyId = activeKeyId;
+        if (!_keys.ContainsKey(activeKeyId)) throw new ArgumentException("Active key does not exist.", nameof(activeKeyId));
+    }
+
+    public BootstrapSigningKey Active(DateTimeOffset now)
+    {
+        BootstrapSigningKey key = _keys[ActiveKeyId];
+        return !key.Revoked && now >= key.NotBefore && now < key.NotAfter
+            ? key : throw new CryptographicException("Active signing key is unavailable.");
+    }
+
+    public BootstrapSigningKey Active(DateTimeOffset now, string tenantId, string environmentId)
+    {
+        BootstrapSigningKey key = Active(now);
+        return key.Usage == "ticket-signing"
+            && (key.TenantId == "*" || key.TenantId == tenantId)
+            && (key.EnvironmentId == "*" || key.EnvironmentId == environmentId)
+            ? key : throw new CryptographicException("Active signing key scope is unavailable.");
+    }
+
+    public BootstrapSigningKey? Verification(string keyId, DateTimeOffset now) =>
+        _keys.GetValueOrDefault(keyId) is { } key && !key.Revoked && key.Usage == "ticket-signing"
+            && now >= (key.NotBefore == DateTimeOffset.MinValue ? key.NotBefore : key.NotBefore.AddMinutes(-5))
+            && now < key.NotAfter ? key : null;
+
+    public void Dispose()
+    {
+        foreach (ECDsa key in _keys.Values.Select(value => value.Key).Distinct()) key.Dispose();
+    }
+}
+
+public sealed class KeyRingBootstrapSigningProvider(BootstrapSigningKeyRing keyRing)
+    : IBootstrapSigningProvider
+{
+    public BootstrapSignature Sign(ReadOnlyMemory<byte> domainSeparatedClaims,
+        string tenantId, string environmentId, DateTimeOffset now)
+    {
+        BootstrapSigningKey key = keyRing.Active(now, tenantId, environmentId);
+        return new BootstrapSignature(key.KeyId,
+            key.Key.SignData(domainSeparatedClaims.Span, HashAlgorithmName.SHA256));
+    }
+}
+
+public sealed class BootstrapTicketSigner
+{
+    private readonly IBootstrapSigningProvider _provider;
+
+    public BootstrapTicketSigner(ECDsa signingKey, string keyId) : this(new BootstrapSigningKeyRing([
+        new BootstrapSigningKey(keyId, signingKey, DateTimeOffset.MinValue, DateTimeOffset.MaxValue)
+    ], keyId)) { }
+
+    public BootstrapTicketSigner(BootstrapSigningKeyRing keyRing)
+        : this(new KeyRingBootstrapSigningProvider(keyRing)) { }
+
+    public BootstrapTicketSigner(IBootstrapSigningProvider provider) => _provider = provider;
 
     public SignedBootstrapTicket Issue(BootstrapTicketClaims claims, DateTimeOffset now)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(claims.Issuer);
-        ArgumentException.ThrowIfNullOrWhiteSpace(claims.Audience);
-        if (claims.TicketId == Guid.Empty || claims.EphemeralPublicKey.Length < 32)
-            throw new ArgumentException("Ticket ID and ephemeral public key are required.", nameof(claims));
+        BinaryBootstrapTicketClaimsCodec.Validate(claims);
         if (claims.NotBefore < now.AddSeconds(-5) || claims.ExpiresAt > now.AddSeconds(60)
             || claims.ExpiresAt <= claims.NotBefore)
             throw new ArgumentException("Ticket validity must fit the 60-second bootstrap window.", nameof(claims));
 
-        byte[] payload = JsonSerializer.SerializeToUtf8Bytes(claims, Json);
-        byte[] signature = signingKey.SignData(payload, HashAlgorithmName.SHA256);
-        return new SignedBootstrapTicket(payload, signature, keyId);
+        byte[] payload = BinaryBootstrapTicketClaimsCodec.Encode(claims);
+        BootstrapSignature signature = _provider.Sign(CreateSigningMessage(payload),
+            claims.TenantId, claims.EnvironmentId, now);
+        if (string.IsNullOrWhiteSpace(signature.KeyId) || signature.KeyId.Length > 128
+            || signature.Signature.Length is < 64 or > 256)
+            throw new CryptographicException("Signing provider returned invalid metadata.");
+        return new SignedBootstrapTicket(payload, signature.Signature, signature.KeyId);
+    }
+
+    internal static byte[] CreateSigningMessage(ReadOnlySpan<byte> canonicalClaims)
+    {
+        byte[] domain = "certael.ticket.v1\0"u8.ToArray();
+        byte[] message = new byte[domain.Length + canonicalClaims.Length];
+        domain.CopyTo(message, 0); canonicalClaims.CopyTo(message.AsSpan(domain.Length));
+        return message;
     }
 }
 
 public interface ITicketRedemptionStore
 {
-    ValueTask<bool> TryRedeemAsync(Guid ticketId, DateTimeOffset expiresAt, CancellationToken cancellationToken);
+    ValueTask<bool> TryRedeemAsync(string tenantId, string environmentId, Guid ticketId,
+        DateTimeOffset expiresAt, CancellationToken cancellationToken);
 }
 
 public sealed class InMemoryTicketRedemptionStore : ITicketRedemptionStore
 {
-    private readonly ConcurrentDictionary<Guid, DateTimeOffset> _redeemed = new();
+    private readonly ConcurrentDictionary<string, DateTimeOffset> _redeemed = new(StringComparer.Ordinal);
 
-    public ValueTask<bool> TryRedeemAsync(Guid ticketId, DateTimeOffset expiresAt, CancellationToken cancellationToken)
+    public ValueTask<bool> TryRedeemAsync(string tenantId, string environmentId, Guid ticketId,
+        DateTimeOffset expiresAt, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return ValueTask.FromResult(_redeemed.TryAdd(ticketId, expiresAt));
+        return ValueTask.FromResult(_redeemed.TryAdd(
+            $"{tenantId}\0{environmentId}\0{ticketId:N}", expiresAt));
     }
 }
 
-public sealed class BootstrapTicketValidator(
-    ECDsa verificationKey,
-    string expectedKeyId,
-    string expectedIssuer,
-    string expectedAudience,
-    ITicketRedemptionStore redemptions,
-    TimeProvider timeProvider)
+public sealed class BootstrapTicketValidator
 {
-    private static readonly JsonSerializerOptions Json = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+    private readonly BootstrapSigningKeyRing _keyRing;
+    private readonly string _expectedIssuer;
+    private readonly string _expectedAudience;
+    private readonly ITicketRedemptionStore _redemptions;
+    private readonly TimeProvider _timeProvider;
+
+    public BootstrapTicketValidator(ECDsa verificationKey, string expectedKeyId,
+        string expectedIssuer, string expectedAudience, ITicketRedemptionStore redemptions,
+        TimeProvider timeProvider) : this(new BootstrapSigningKeyRing([
+            new BootstrapSigningKey(expectedKeyId, verificationKey, DateTimeOffset.MinValue, DateTimeOffset.MaxValue)
+        ], expectedKeyId), expectedIssuer, expectedAudience, redemptions, timeProvider) { }
+
+    public BootstrapTicketValidator(BootstrapSigningKeyRing keyRing, string expectedIssuer,
+        string expectedAudience, ITicketRedemptionStore redemptions, TimeProvider timeProvider)
+    {
+        _keyRing = keyRing; _expectedIssuer = expectedIssuer; _expectedAudience = expectedAudience;
+        _redemptions = redemptions; _timeProvider = timeProvider;
+    }
 
     public async ValueTask<TicketValidationResult> ValidateAndRedeemAsync(
         SignedBootstrapTicket ticket,
@@ -79,22 +185,34 @@ public sealed class BootstrapTicketValidator(
         ReadOnlyMemory<byte> possessionSignature,
         CancellationToken cancellationToken = default)
     {
-        if (!CryptographicOperations.FixedTimeEquals(
-                System.Text.Encoding.UTF8.GetBytes(ticket.KeyId),
-                System.Text.Encoding.UTF8.GetBytes(expectedKeyId)))
+        DateTimeOffset now = _timeProvider.GetUtcNow();
+        if (ticket.Claims.Length is < 1 or > BinaryBootstrapTicketClaimsCodec.MaximumClaimsLength
+            || ticket.Signature.Length is < 64 or > 256
+            || string.IsNullOrWhiteSpace(ticket.KeyId) || ticket.KeyId.Length > 128)
+            return TicketValidationResult.Reject("INVALID_TICKET");
+        BootstrapSigningKey? verificationKey = _keyRing.Verification(ticket.KeyId, now);
+        if (verificationKey is null)
             return TicketValidationResult.Reject("UNKNOWN_SIGNING_KEY");
-        if (!verificationKey.VerifyData(ticket.Claims, ticket.Signature, HashAlgorithmName.SHA256))
-            return TicketValidationResult.Reject("INVALID_SIGNATURE");
+        try
+        {
+            if (!verificationKey.Key.VerifyData(BootstrapTicketSigner.CreateSigningMessage(ticket.Claims),
+                    ticket.Signature, HashAlgorithmName.SHA256))
+                return TicketValidationResult.Reject("INVALID_SIGNATURE");
+        }
+        catch (Exception exception) when (exception is CryptographicException or ArgumentException)
+        { return TicketValidationResult.Reject("INVALID_SIGNATURE"); }
 
         BootstrapTicketClaims? claims;
-        try { claims = JsonSerializer.Deserialize<BootstrapTicketClaims>(ticket.Claims, Json); }
-        catch (JsonException) { return TicketValidationResult.Reject("INVALID_CLAIMS"); }
-        if (claims is null) return TicketValidationResult.Reject("INVALID_CLAIMS");
-        if (!string.Equals(claims.Issuer, expectedIssuer, StringComparison.Ordinal)
-            || !string.Equals(claims.Audience, expectedAudience, StringComparison.Ordinal))
+        try { claims = BinaryBootstrapTicketClaimsCodec.Decode(ticket.Claims); }
+        catch (TicketClaimsException) { return TicketValidationResult.Reject("INVALID_CLAIMS"); }
+        if ((verificationKey.TenantId != "*" && verificationKey.TenantId != claims.TenantId)
+            || (verificationKey.EnvironmentId != "*"
+                && verificationKey.EnvironmentId != claims.EnvironmentId))
+            return TicketValidationResult.Reject("SIGNING_KEY_SCOPE_MISMATCH");
+        if (!string.Equals(claims.Issuer, _expectedIssuer, StringComparison.Ordinal)
+            || !string.Equals(claims.Audience, _expectedAudience, StringComparison.Ordinal))
             return TicketValidationResult.Reject("ISSUER_OR_AUDIENCE_MISMATCH");
 
-        DateTimeOffset now = timeProvider.GetUtcNow();
         if (now < claims.NotBefore.AddSeconds(-5) || now >= claims.ExpiresAt.AddSeconds(5))
             return TicketValidationResult.Reject("TICKET_EXPIRED_OR_NOT_YET_VALID");
         if (!CryptographicOperations.FixedTimeEquals(claims.EphemeralPublicKey, presentedEphemeralPublicKey.Span))
@@ -102,7 +220,8 @@ public sealed class BootstrapTicketValidator(
         if (!VerifyPossession(claims.TicketId, presentedEphemeralPublicKey.Span,
                 challenge.Span, possessionSignature.Span))
             return TicketValidationResult.Reject("INVALID_POSSESSION_PROOF");
-        if (!await redemptions.TryRedeemAsync(claims.TicketId, claims.ExpiresAt, cancellationToken))
+        if (!await _redemptions.TryRedeemAsync(claims.TenantId, claims.EnvironmentId,
+                claims.TicketId, claims.ExpiresAt, cancellationToken))
             return TicketValidationResult.Reject("TICKET_ALREADY_REDEEMED");
         return TicketValidationResult.Allow(claims);
     }

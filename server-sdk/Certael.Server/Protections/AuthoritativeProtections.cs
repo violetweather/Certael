@@ -99,9 +99,14 @@ public sealed class AuthoritativeVisibilityGuard
 }
 
 public sealed record ServerInputObservation(
-    DateTimeOffset ServerTime, double ViewYaw, double ViewPitch, bool PerformedAction);
+    DateTimeOffset ServerTime, double ViewYaw, double ViewPitch, bool PerformedAction,
+    DateTimeOffset? TargetBecameActionableAt = null,
+    double? PositionX = null, double? PositionY = null, double? PositionZ = null,
+    double? NetworkRoundTripMilliseconds = null, string? InputDevice = null);
 
-public sealed record BehavioralFinding(string Reason, int RiskContribution, double Confidence);
+public sealed record BehavioralFinding(
+    string Reason, int RiskContribution, double Confidence,
+    string RuleVersion = "1.0.0", IReadOnlyDictionary<string, string>? Features = null);
 
 /// <summary>Produces advisory findings from server-observed input timing; never authorizes a ban.</summary>
 public sealed class BehavioralAnalyzer
@@ -110,14 +115,25 @@ public sealed class BehavioralAnalyzer
     {
         if (samples.Count < 8) return [];
         var findings = new List<BehavioralFinding>();
+        if (samples.Any(sample => !double.IsFinite(sample.ViewYaw)
+            || !double.IsFinite(sample.ViewPitch)
+            || sample.NetworkRoundTripMilliseconds is { } rtt && (!double.IsFinite(rtt) || rtt < 0)
+            || sample.PositionX is { } x && !double.IsFinite(x)
+            || sample.PositionY is { } y && !double.IsFinite(y)
+            || sample.PositionZ is { } z && !double.IsFinite(z)))
+            return [new("INVALID_BEHAVIOR_WINDOW", 10, 1,
+                Features: new Dictionary<string, string> { ["sample_count"] = samples.Count.ToString() })];
         double[] intervals = samples.Zip(samples.Skip(1),
             (a, b) => (b.ServerTime - a.ServerTime).TotalMilliseconds).ToArray();
         if (intervals.Any(value => value <= 0))
-            findings.Add(new("NON_MONOTONIC_INPUT", 15, 0.8));
+            findings.Add(new("NON_MONOTONIC_INPUT", 15, 0.8,
+                Features: Features(("interval_count", intervals.Length))));
         double mean = intervals.Average();
         double variance = intervals.Average(value => Math.Pow(value - mean, 2));
         if (mean > 0 && Math.Sqrt(variance) < 0.25 && samples.Count(value => value.PerformedAction) >= 4)
-            findings.Add(new("IMPROBABLY_REGULAR_INPUT", 20, 0.65));
+            findings.Add(new("IMPROBABLY_REGULAR_INPUT", 20, 0.65,
+                Features: Features(("interval_stddev_millis", Math.Sqrt(variance)),
+                    ("mean_interval_millis", mean))));
 
         int snaps = 0;
         for (int index = 1; index < samples.Count; index++)
@@ -128,9 +144,63 @@ public sealed class BehavioralAnalyzer
             double pitch = Math.Abs(samples[index].ViewPitch - samples[index - 1].ViewPitch);
             if (Math.Sqrt(yaw * yaw + pitch * pitch) >= 45 && samples[index].PerformedAction) snaps++;
         }
-        if (snaps >= 3) findings.Add(new("REPEATED_RAPID_VIEW_SNAP", 25, 0.7));
+        if (snaps >= 3) findings.Add(new("REPEATED_RAPID_VIEW_SNAP", 25, 0.7,
+            Features: Features(("rapid_snap_count", snaps))));
+
+        double[] velocities = new double[samples.Count - 1];
+        for (int index = 1; index < samples.Count; index++)
+        {
+            double seconds = intervals[index - 1] / 1000;
+            if (seconds <= 0) continue;
+            double yaw = AngularDistance(samples[index - 1].ViewYaw, samples[index].ViewYaw);
+            double pitch = Math.Abs(samples[index].ViewPitch - samples[index - 1].ViewPitch);
+            velocities[index - 1] = Math.Sqrt(yaw * yaw + pitch * pitch) / seconds;
+        }
+        int extremeAccelerations = 0;
+        for (int index = 1; index < velocities.Length; index++)
+        {
+            double seconds = intervals[index] / 1000;
+            if (seconds > 0 && Math.Abs(velocities[index] - velocities[index - 1]) / seconds > 50_000)
+                extremeAccelerations++;
+        }
+        if (extremeAccelerations >= 3)
+            findings.Add(new("REPEATED_EXTREME_VIEW_ACCELERATION", 20, 0.6,
+                Features: Features(("extreme_acceleration_count", extremeAccelerations))));
+
+        double[] reactionTimes = samples.Where(sample => sample.PerformedAction
+                && sample.TargetBecameActionableAt is not null
+                && sample.NetworkRoundTripMilliseconds.GetValueOrDefault() < 200)
+            .Select(sample => (sample.ServerTime - sample.TargetBecameActionableAt!.Value).TotalMilliseconds)
+            .Where(value => value >= 0).ToArray();
+        int impossibleReactions = reactionTimes.Count(value => value < 50);
+        if (impossibleReactions >= 3)
+            findings.Add(new("REPEATED_IMPOSSIBLE_REACTION_WINDOW", 25, 0.75,
+                Features: Features(("reaction_count", impossibleReactions),
+                    ("minimum_reaction_millis", reactionTimes.Min()))));
+
+        var steps = new Dictionary<string, int>(StringComparer.Ordinal);
+        for (int index = 1; index < samples.Count; index++)
+        {
+            ServerInputObservation prior = samples[index - 1], current = samples[index];
+            if (prior.PositionX is null || prior.PositionY is null || prior.PositionZ is null
+                || current.PositionX is null || current.PositionY is null || current.PositionZ is null)
+                continue;
+            string step = FormattableString.Invariant(
+                $"{current.PositionX - prior.PositionX:0.000}|{current.PositionY - prior.PositionY:0.000}|{current.PositionZ - prior.PositionZ:0.000}");
+            steps[step] = steps.GetValueOrDefault(step) + 1;
+        }
+        int repeatedSteps = steps.Count == 0 ? 0 : steps.Values.Max();
+        if (repeatedSteps >= 8)
+            findings.Add(new("REPEATED_IDENTICAL_PATH_STEPS", 15, 0.55,
+                Features: Features(("repeated_step_count", repeatedSteps))));
         return findings;
     }
+
+    private static IReadOnlyDictionary<string, string> Features(
+        params (string Name, double Value)[] values) => values.ToDictionary(
+            value => value.Name,
+            value => value.Value.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture),
+            StringComparer.Ordinal);
 
     private static double AngularDistance(double left, double right)
     {

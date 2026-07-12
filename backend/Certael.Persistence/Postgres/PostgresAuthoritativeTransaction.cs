@@ -21,6 +21,7 @@ public sealed class PostgresAuthoritativeTransaction<TState> : IAuthoritativeTra
     private bool _completed;
     private Guid? _reservedAction;
     private bool _resultStaged;
+    private bool _tenantSet;
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
     public PostgresAuthoritativeTransaction(NpgsqlConnection connection, NpgsqlTransaction transaction,
@@ -40,23 +41,24 @@ public sealed class PostgresAuthoritativeTransaction<TState> : IAuthoritativeTra
     {
         if (_completed || _reservedAction is not null)
             throw new InvalidOperationException("Only one action may be reserved per transaction.");
+        await EnsureTenantAsync(cancellationToken);
         const string insert = """
-            INSERT INTO certael_action_results(session_id, action_id, response_type, result, status)
-            VALUES ($1,$2,$3,NULL,'processing') ON CONFLICT (session_id, action_id) DO NOTHING
+            INSERT INTO certael_action_results(tenant_id, session_id, action_id, response_type, result, status)
+            VALUES ($1,$2,$3,$4,NULL,'processing') ON CONFLICT (session_id, action_id) DO NOTHING
             """;
         string responseType = typeof(TResponse).AssemblyQualifiedName
             ?? throw new InvalidOperationException("Response type has no stable name.");
         await using (var command = new NpgsqlCommand(insert, _connection, _transaction))
         {
-            command.Parameters.AddWithValue(_sessionId); command.Parameters.AddWithValue(actionId);
-            command.Parameters.AddWithValue(responseType);
+            command.Parameters.AddWithValue(_tenantId); command.Parameters.AddWithValue(_sessionId);
+            command.Parameters.AddWithValue(actionId); command.Parameters.AddWithValue(responseType);
             if (await command.ExecuteNonQueryAsync(cancellationToken) == 1)
             { _reservedAction = actionId; return ActionReservation<TResponse>.New(); }
         }
         await using var existing = new NpgsqlCommand(
-            "SELECT response_type, result, status FROM certael_action_results WHERE session_id=$1 AND action_id=$2",
+            "SELECT response_type, result, status FROM certael_action_results WHERE tenant_id=$1 AND session_id=$2 AND action_id=$3",
             _connection, _transaction);
-        existing.Parameters.AddWithValue(_sessionId); existing.Parameters.AddWithValue(actionId);
+        existing.Parameters.AddWithValue(_tenantId); existing.Parameters.AddWithValue(_sessionId); existing.Parameters.AddWithValue(actionId);
         await using NpgsqlDataReader reader = await existing.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken) || reader.GetString(2) != "completed" || reader.IsDBNull(1))
             throw new InvalidOperationException("Existing action reservation is incomplete.");
@@ -122,5 +124,13 @@ public sealed class PostgresAuthoritativeTransaction<TState> : IAuthoritativeTra
         if (!_completed) await _transaction.RollbackAsync();
         await _transaction.DisposeAsync();
         await _connection.DisposeAsync();
+    }
+
+    private async ValueTask EnsureTenantAsync(CancellationToken cancellationToken)
+    {
+        if (_tenantSet) return;
+        await using var command = new NpgsqlCommand("SELECT set_config('certael.tenant_id', $1, true)", _connection, _transaction);
+        command.Parameters.AddWithValue(_tenantId); await command.ExecuteNonQueryAsync(cancellationToken);
+        _tenantSet = true;
     }
 }

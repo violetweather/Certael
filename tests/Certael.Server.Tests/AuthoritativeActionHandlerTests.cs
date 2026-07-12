@@ -21,8 +21,9 @@ public sealed class AuthoritativeActionHandlerTests
                     ReadOnlyMemory<byte>.Empty, DateTimeOffset.UtcNow))));
         Guid actionId = Guid.NewGuid();
         var action = new AuthorizedAction<string>("s", 1, actionId, "test.action", 1, DateTimeOffset.UtcNow,
-            1, "request", ReadOnlyMemory<byte>.Empty, new byte[32], new byte[64]);
-        var binding = new ActionBinding("test.action", "game", "prod", "match", "server", "build");
+            1, "request", ReadOnlyMemory<byte>.Empty, new byte[32], new byte[64],
+            RequestSchema: "test.Request.v1", SessionBindingDigest: SessionBindingDigest.Compute(session));
+        var binding = new ActionBinding("test.action", "game", "prod", "match", "server", "build", TenantId: "tenant");
         CancellationToken token = TestContext.Current.CancellationToken;
 
         ActionResult<string>[] results = await Task.WhenAll(
@@ -41,16 +42,16 @@ public sealed class AuthoritativeActionHandlerTests
 
     private sealed class SessionStore(SessionAuthorization session) : ISessionAuthorizationStore
     {
-        public ValueTask<SessionAuthorization?> FindAsync(string id, CancellationToken token) =>
-            ValueTask.FromResult<SessionAuthorization?>(id == session.SessionId ? session : null);
+        public ValueTask<SessionAuthorization?> FindAsync(string tenant, string id, CancellationToken token) =>
+            ValueTask.FromResult<SessionAuthorization?>(tenant == session.TenantId && id == session.SessionId ? session : null);
     }
 
     private sealed class ResultStore : IActionResultStore
     {
         private readonly ConcurrentDictionary<Guid, object> _results = new();
-        public ValueTask<ActionResult<T>?> FindAsync<T>(string sessionId, Guid id, CancellationToken token) =>
+        public ValueTask<ActionResult<T>?> FindAsync<T>(string tenantId, string sessionId, Guid id, CancellationToken token) =>
             ValueTask.FromResult(_results.TryGetValue(id, out object? value) ? (ActionResult<T>)value : null);
-        public ValueTask StoreAsync<T>(string sessionId, ActionResult<T> result, CancellationToken token)
+        public ValueTask StoreAsync<T>(string tenantId, string sessionId, ActionResult<T> result, CancellationToken token)
         { _results[result.ActionId] = result; return ValueTask.CompletedTask; }
     }
 

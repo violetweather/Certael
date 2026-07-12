@@ -1,0 +1,3 @@
+<linker>
+  <assembly fullname="Certael.Unity" preserve="all" />
+</linker>

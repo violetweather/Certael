@@ -7,10 +7,10 @@ development profile production-ready.
 ## Prerequisites
 
 - .NET 10 SDK
-- Rust stable toolchain
+- Rust 1.97.0 only when building native code from source
 - Docker with Compose support
-- Git and a C/C++ compiler for native smoke tests
-- Godot 4.3+, Unity 2022 LTS+, or Unreal 5.3+ only when building that adapter
+- Git and a C/C++ compiler only for source builds and native smoke tests
+- Godot 4.7, Unity 6000.3.16f1, or Unreal 5.8 only when building that adapter
 - An authoritative game server; listen servers and peer hosts are lower assurance
 
 Confirm the repository builds before integration:
@@ -23,6 +23,7 @@ cargo test --workspace
 ## 1. Run the development backend
 
 ```bash
+export CERTAEL_DEV_POSTGRES_PASSWORD="$(openssl rand -hex 24)"
 docker compose -f deploy/compose/docker-compose.yml up -d
 curl --fail http://localhost:8080/healthz
 ```
@@ -35,16 +36,33 @@ architecture but are not fully wired by the current API.
 The local API is HTTP and uses development credentials. Keep it on loopback or an
 isolated development network.
 
-## 2. Build the client runtime
+There is no insecure ticket-issuance bypass, even in Development. The HTTP
+Compose profile is suitable for health checks, persistence work, and the public
+cryptographic redemption path; its workload-authenticated endpoints are
+unavailable without TLS client-certificate termination. The automated endpoint
+tests provide in-process development coverage. For manual end-to-end testing,
+run Kestrel or a trusted local proxy with HTTPS, a dedicated test OIDC issuer,
+and a client certificate bound through `cnf.x5t#S256`. Never reuse those
+credentials in production.
+
+## 2. Install or build the client runtime
+
+Normal game developers should install a verified prebuilt engine package and do
+not need Rust, C++, SCons, `godot-cpp`, MinGW, or MSVC. Until pre-release
+packages are published, maintainers can build the native runtime with:
 
 ```bash
-cargo build --release -p certael-c-api
+./scripts/build.sh native --configuration Release
 ```
 
-The native library is emitted under `target/release`. Copy the platform library
-to the location required by your engine adapter. Release packages are not yet
-published, so a production adopter must build, sign, and distribute its own
-artifacts. See [Engine support](engine-support.md).
+```powershell
+.\scripts\build.ps1 native -Configuration Release
+```
+
+Use `all` instead of `native` to build the host Godot adapter too. The scripts
+pin Rust, select `x86_64-pc-windows-msvc` on Windows, fetch the locked
+`godot-cpp` revision, link the actual native library, and fail rather than emit a
+dummy library. See [Engine support](engine-support.md) for prebuilt layouts.
 
 ## 3. Reference the authoritative SDK
 
@@ -70,15 +88,21 @@ Choose a mutation with a simple invariant, such as `inventory.craft`:
 3. Bootstrap the Certael session using the flow in [Authorization](authorization.md).
 4. Have the client call the adapter's `AuthorizeAction`/`authorize_action` and
    send the returned envelope over the game's authenticated network connection.
-5. On the game server, decode the envelope into `AuthorizedAction<TRequest>` and
-   pass it to `AuthoritativeActionHandler` with an exact `ActionBinding`.
-6. In `validateAndApply`, evaluate the request against the transaction's current
+5. On the game server, call `CertaelServerEngine.ValidateAndExecuteAsync` with
+   the raw envelope, exact `ActionBinding`, verified signed protection profile,
+   generated request decoder, and authoritative transaction factory.
+6. In the bounded trusted callback, evaluate the request against the transaction's current
    authoritative state and stage only an accepted mutation.
 7. Return `ActionResult<TResponse>` and the new authoritative snapshot to the
    client.
 
-Transport decoding and game-state transaction implementations are integration
-points: Certael does not know the game's RPC framework or state database.
+The high-level API strictly decodes the envelope, verifies the protection-profile
+signature and profile/session binding, applies that action's schema and rate
+policy, authorizes proof/sequence/chain state, bounds the callback, and commits
+through the authoritative handler. It deliberately does not expose a
+signature-valid shortcut. Transport and game-state transaction implementations
+remain integration points because Certael does not know the game's RPC framework
+or simulation database.
 
 ## 5. Exercise hostile cases
 

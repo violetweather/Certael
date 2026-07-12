@@ -15,7 +15,7 @@ public sealed record RuleDeployment(
     DateTimeOffset UpdatedAt,
     string UpdatedBy);
 
-public sealed class RulePackLifecycleStore(TimeProvider timeProvider)
+public sealed class RulePackLifecycleStore(TimeProvider timeProvider, RulePackVerifier verifier)
 {
     private readonly ConcurrentDictionary<string, RuleDeployment> _deployments = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, string> _activeByEnvironment = new(StringComparer.Ordinal);
@@ -24,6 +24,8 @@ public sealed class RulePackLifecycleStore(TimeProvider timeProvider)
 
     public RuleDeployment AddDraft(SignedRulePack pack, string author)
     {
+        if (!verifier.Verify(pack))
+            throw new RuleLifecycleException("Rule-pack signature or canonical document is invalid.");
         string key = Key(pack.Document);
         var deployment = new RuleDeployment(pack, RuleDeploymentStage.Draft, 0, [],
             timeProvider.GetUtcNow(), RequireSubject(author));

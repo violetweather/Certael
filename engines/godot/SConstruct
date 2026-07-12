@@ -1,10 +1,17 @@
 #!/usr/bin/env python
+import os
 env = SConscript("godot-cpp/SConstruct")
 env.Append(CPPPATH=["src", "../../runtime/certael-c-api/include"])
 sources = Glob("src/*.cpp")
 if env["platform"] == "windows":
-    env.Append(LIBPATH=["../../target/x86_64-pc-windows-msvc/release"], LIBS=["certael_c_api"])
+    native_dir = os.environ.get("CERTAEL_NATIVE_DIR", "../../target/x86_64-pc-windows-msvc/release")
+    native_file = os.path.join(native_dir, "certael_c_api.lib")
 else:
-    env.Append(LIBPATH=["../../target/release"], LIBS=["certael_c_api"])
+    native_dir = os.environ.get("CERTAEL_NATIVE_DIR", "../../target/release")
+    native_file = os.path.join(native_dir, "libcertael_c_api.a")
+if not os.path.isfile(native_file):
+    print("Certael native library is missing: {}. Run the repository build script first.".format(native_file))
+    Exit(1)
+env.Append(LIBPATH=[native_dir], LIBS=["certael_c_api"])
 library = env.SharedLibrary("addons/certael/bin/certael{}".format(env["suffix"]), source=sources)
 Default(library)

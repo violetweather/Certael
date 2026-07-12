@@ -14,12 +14,16 @@ public sealed record UserModeIntegrityReport(
 public sealed class UserModeIntegrityVerifier
 {
     public IReadOnlyList<Finding> Evaluate(UserModeIntegrityReport report,
+        ReadOnlyMemory<byte> expectedChallenge,
         ProtectedBuildManifest expected, string tenantId, string gameId, string environmentId,
         string sessionId, string playerSubject, byte[] rulePackDigest, DateTimeOffset serverNow)
     {
-        if (report.Challenge.Length < 16 || report.Challenge.Length > 256)
+        if (report.Challenge.Length < 16 || report.Challenge.Length > 256
+            || expectedChallenge.Length is < 16 or > 256)
             throw new ArgumentException("Integrity challenge is invalid.", nameof(report));
         var reasons = new List<string>();
+        if (!CryptographicOperations.FixedTimeEquals(report.Challenge, expectedChallenge.Span))
+            reasons.Add("INTEGRITY_CHALLENGE_MISMATCH");
         if (!string.Equals(report.BuildId, expected.BuildId, StringComparison.Ordinal)) reasons.Add("BUILD_ID_MISMATCH");
         if (Math.Abs((serverNow - report.ObservedAt).TotalMinutes) > 5) reasons.Add("STALE_INTEGRITY_REPORT");
         var actual = new Dictionary<string, ProtectedBuildFile>(StringComparer.Ordinal);
@@ -29,6 +33,9 @@ public sealed class UserModeIntegrityVerifier
                 || file.Size < 0 || file.Sha256.Length != 32 || !actual.TryAdd(file.Path, file))
                 reasons.Add("INVALID_BUILD_REPORT");
         }
+        if (report.LoadedModuleNames.Length > 1024
+            || report.LoadedModuleNames.Any(value => string.IsNullOrWhiteSpace(value) || value.Length > 512))
+            reasons.Add("INVALID_MODULE_REPORT");
         foreach (ProtectedBuildFile file in expected.Files)
         {
             if (!actual.TryGetValue(file.Path, out ProtectedBuildFile? found)

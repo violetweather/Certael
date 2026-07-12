@@ -3,7 +3,7 @@ services:
     image: postgres:17-alpine
     environment:
       POSTGRES_USER: certael
-      POSTGRES_PASSWORD: development-only
+      POSTGRES_PASSWORD: ${CERTAEL_DEV_POSTGRES_PASSWORD:?Set CERTAEL_DEV_POSTGRES_PASSWORD to a random local-only value}
       POSTGRES_DB: certael
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U certael"]
@@ -28,7 +28,7 @@ services:
     environment:
       ASPNETCORE_URLS: http://+:8080
       ASPNETCORE_ENVIRONMENT: Development
-      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=certael;Username=certael;Password=development-only
+      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=certael;Username=certael;Password=${CERTAEL_DEV_POSTGRES_PASSWORD:?Set CERTAEL_DEV_POSTGRES_PASSWORD}
       ConnectionStrings__Redis: redis:6379,abortConnect=false
     ports: ["8080:8080"]
     depends_on:

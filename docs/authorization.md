@@ -19,10 +19,13 @@ possession, then signs every action with an ephemeral key.
    its authenticated authoritative game server.
 3. The game server calls `POST /v1/sessions/tickets` using both mTLS and an OAuth
    access token. The identity requires `sessions:issue`, plus matching
-   `tenant_id` and `environment_id` claims.
+   `tenant_id` and `environment_id` claims. Its standard `cnf.x5t#S256` claim
+   must bind the token to the presented certificate.
 4. The request binds the ticket to tenant, game, environment, player subject,
    match, authoritative server, build, protection profile, and ephemeral key.
-5. Certael returns an ECDSA-signed ticket valid for at most 60 seconds.
+5. Certael deterministically encodes the ticket claims as strict Protobuf-wire
+   bytes and signs `certael.ticket.v1\0 || claims` with the active scoped ECDSA
+   key. The ticket is valid for at most 60 seconds.
 6. The server generates a cryptographically random 16–256 byte, single-use
    challenge and sends the ticket ID and challenge to the client.
 7. The client signs it using `SignRedemption`/`sign_redemption`.
@@ -57,29 +60,25 @@ server verification.
 
 ## Activated binding
 
-The engine runtime accepts JSON matching the native `SessionBinding` fields:
+The engine runtime accepts a typed binding built from the redeemed session:
 
-```json
-{
-  "session_id": "7a9c...",
-  "game_id": "my-game",
-  "environment_id": "production",
-  "match_id": "match-128",
-  "build_id": "2026.07.11.1",
-  "expires_at_unix": 1783814400
-}
+```text
+session ID, game ID, environment ID, match ID, build ID, protection profile,
+permitted protocol range, expiry, initial sequence, and the opaque 32-byte
+session-binding digest
 ```
 
-Construct this JSON from the successful Certael response on trusted networking
-code. Never activate arbitrary JSON received from an unauthenticated peer.
+Construct it from the successful Certael response in trusted networking code.
+Never activate a binding received from an unauthenticated peer. The binding
+digest covers server-only identity fields without exposing them to the client.
 
 ## Action sequence
 
 The client serializes a typed request payload and calls the adapter. The runtime
-adds a session ID, monotonically increasing sequence, random action ID, action
-type, schema version, monotonic timestamp, previous-action digest, and Ed25519
-possession proof. Payloads are limited to 64 KiB and action types to 128 safe
-ASCII identifier characters.
+adds protocol version, session ID, monotonically increasing sequence, random
+action ID, action type, request-schema ID/version, session-binding digest,
+monotonic timestamp, previous-action digest, and Ed25519 proof. Production uses
+strict canonical Protobuf-wire bytes. Payloads are limited to 64 KiB.
 
 The authoritative server then:
 
@@ -92,8 +91,58 @@ The authoritative server then:
 6. stages the mutation, result, and authoritative outbox event;
 7. commits once and returns the result.
 
+Admission requires the exact next sequence, not merely a larger sequence.
+Skipping a value returns `SEQUENCE_GAP`. A valid contiguous action rejected only
+for rate excess consumes its sequence and digest so later client actions remain
+synchronized; replay, chain, proof, binding, and gap failures do not.
+
 An accepted action must produce an `AuthoritativeEvent`. Any unexpected exception
 returns `INDETERMINATE`; the client must reconcile from authoritative state.
+
+Use `CertaelServerEngine.ValidateAndExecuteAsync` as the production entry point.
+It accepts canonical envelope bytes, the expected binding, a signed protection
+profile, a generated request decoder, the authoritative transaction factory,
+and the trusted game callback. The engine verifies the profile signature,
+game/environment/profile/session binding, action registration, request schema,
+per-action rate policy, possession proof, sequence, and digest chain before the
+callback can stage a mutation. There is intentionally no public “signature is
+valid, therefore allow” API.
+
+```csharp
+var certael = new CertaelServerEngine(
+    actionAuthorizer,
+    actionResultStore,
+    TimeProvider.System,
+    trustedProtectionProfileVerifier);
+
+ActionResult<CraftResponse> result =
+    await certael.ValidateAndExecuteAsync<CraftRequest, CraftResponse, InventoryState>(
+        envelope,
+        new ActionBinding(
+            ActionType: "inventory.craft",
+            GameId: "my-game",
+            EnvironmentId: "production",
+            MatchId: matchId,
+            ServerId: serverId,
+            BuildId: buildId,
+            TenantId: tenantId),
+        signedProtectionProfile,
+        payload => craftCodec.Decode(payload),
+        transactionFactory.BeginInventoryAsync,
+        async (action, transaction, cancellationToken) =>
+        {
+            // Read only transaction.Current and other trusted server state.
+            return await craftRules.ValidateAndStageAsync(
+                action, transaction, cancellationToken);
+        },
+        callbackTimeout: TimeSpan.FromMilliseconds(250),
+        cancellationToken: cancellationToken);
+```
+
+The signed profile supplies the action's schema/version and admission rate; do
+not duplicate those values from client input. A callback timeout, exception,
+invalid public reason/evidence shape, transaction uncertainty, or unexpected
+revision returns `Indeterminate` and does not justify an account punishment.
 
 ## What proofs do—and do not—prove
 

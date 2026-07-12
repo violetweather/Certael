@@ -1,9 +1,15 @@
-# Godot, Unity, and Unreal integration
+# Godot 4.7, Unity 6000.3.16f1, and Unreal 5.8 integration
 
 All adapters wrap the same Rust runtime through its stable C ABI. They create
 signed request envelopes; they never authorize gameplay state. Keep the envelope
 on the game's authenticated client-to-server channel rather than sending it
 directly to a gameplay database or trusting it locally.
+
+> **Current release status:** package layouts and release automation exist, but
+> no package is certified for 1.0 yet. Until a verified `v0.*` pre-release is
+> published successfully, use the source-build scripts and treat the result as a
+> development artifact. Never download native libraries from an unofficial
+> mirror.
 
 ## Common lifecycle
 
@@ -22,18 +28,22 @@ Do not serialize engine objects, arbitrary dictionaries, or user-authored JSON a
 game requests. Generate a stable binary payload from a schema and validate it on
 the server.
 
-## Godot 4.3+
+## Godot 4.7
 
 ### Install
 
-1. Copy `engines/godot/addons/certael` to `res://addons/certael`.
-2. Build the Rust `certael-c-api` library and the GDExtension wrapper in
-   `engines/godot` using the platform toolchain and `godot-cpp` dependency.
-3. Put each signed native binary at the path declared in
-   `certael.gdextension`; update that file when using a different layout.
-4. Enable Certael under **Project Settings → Plugins**.
-5. Export every supported target and confirm the extension loads outside the
+1. Download `certael-godot-4.7-vX.Y.Z.zip` from a verified Certael pre-release,
+   validate its checksum/attestation, and extract it into the project root.
+2. Confirm `res://addons/certael` contains the platform binaries; do not compile
+   Rust, C++, SCons, or `godot-cpp` for a normal installation.
+3. Enable Certael under **Project Settings → Plugins**.
+4. Export every supported target and confirm the extension loads outside the
    editor. Missing platform binaries must fail the export preflight.
+
+Maintainers and contributors may build from source with
+`./scripts/build.sh all --configuration Release` or
+`.\scripts\build.ps1 all -Configuration Release`. The scripts pin and fetch
+`godot-cpp`, select MSVC on Windows, and fail if the real native library is absent.
 
 ### Use
 
@@ -52,27 +62,27 @@ func on_redemption_challenge(ticket_id: PackedByteArray, challenge: PackedByteAr
     var proof := certael.sign_redemption(ticket_id, challenge)
     game_network.redeem_certael_ticket(ticket_id, challenge, proof)
 
-func on_certael_session(binding_json: String, initial_sequence: int) -> void:
-    if not certael.activate_session(binding_json, initial_sequence):
+func on_certael_session(binding: Dictionary) -> void:
+    if not certael.activate_session(binding):
         push_error("Certael session activation failed")
 
 func request_craft(payload: PackedByteArray) -> void:
-    var envelope := certael.authorize_action("inventory.craft", 1, payload)
+    var envelope := certael.authorize_action(
+        "inventory.craft", "example.Craft.v1", 1, payload)
     game_network.send_authoritative_action(envelope)
 ```
 
 The named `game_network` methods are integration placeholders for the project's
 existing authenticated multiplayer transport, not methods supplied by Certael.
 
-## Unity 2022 LTS+
+## Unity 6000.3.16f1
 
 ### Install
 
-1. Add `engines/unity` as a local package with Unity Package Manager.
-2. Place the signed native library in appropriate package runtime directories
-   and set import targets for each OS/architecture.
-3. Preserve the native library name expected by `CertaelNative.cs`.
-4. Test Editor/Mono and player/IL2CPP builds. Include AOT and stripping checks.
+1. Download and verify `certael-unity-6000.3-vX.Y.Z.tgz`.
+2. In Package Manager, choose **Add package from tarball**. Native libraries and
+   import layout are included; a normal install needs no native compiler.
+3. Test Editor/Mono and player/IL2CPP builds. Include AOT and stripping checks.
 
 ### Use
 
@@ -91,12 +101,13 @@ public sealed class SecureGameSession : IDisposable
     public void AnswerChallenge(Guid ticketId, byte[] challenge) =>
         network.RedeemCertaelTicket(ticketId, challenge, certael.SignRedemption(ticketId, challenge));
 
-    public void Activate(string verifiedBindingJson, ulong initialSequence) =>
-        certael.ActivateSession(verifiedBindingJson, initialSequence);
+    public void Activate(CertaelSessionBinding verifiedBinding) =>
+        certael.ActivateSession(verifiedBinding);
 
     public void RequestCraft(byte[] typedPayload) =>
         network.SendAuthoritativeAction(
-            certael.AuthorizeAction("inventory.craft", 1, typedPayload));
+            certael.AuthorizeAction(
+                "inventory.craft", "example.Craft.v1", 1, typedPayload));
 
     public void Dispose() => certael.Dispose();
 }
@@ -105,15 +116,17 @@ public sealed class SecureGameSession : IDisposable
 `IGameNetwork` is illustrative. Keep the `CertaelClient` out of prefabs that can
 be duplicated and dispose it on logout or match transition.
 
-## Unreal Engine 5.3+
+## Unreal Engine 5.8
 
 ### Install
 
-1. Copy `engines/unreal/Certael` to the project's `Plugins` directory.
-2. Place signed platform libraries where `Certael.Build.cs` expects them, or
-   adjust the build rules to the project's third-party layout.
-3. Regenerate project files, compile, and enable the plugin.
-4. Package every target configuration; editor success alone does not validate
+1. Download and verify `certael-unreal-5.8-vX.Y.Z.zip` and extract `Certael` into
+   the project's `Plugins` directory. The archive includes native headers and
+   runtime libraries; Blueprint users do not compile Rust. Stable 1.0 artifacts
+   additionally require platform code signing.
+2. Regenerate project files, compile the normal Unreal game target, and enable
+   the plugin.
+3. Package every target configuration; editor success alone does not validate
    staged runtime dependencies.
 
 ### Use from C++
@@ -126,19 +139,20 @@ GameNetwork->RequestCertaelTicket(PublicKey);
 TArray<uint8> Proof = Certael->SignRedemption(TicketIdBytes, Challenge);
 GameNetwork->RedeemCertaelTicket(TicketIdBytes, Challenge, Proof);
 
-if (!Certael->ActivateSession(VerifiedBindingJson, InitialSequence))
+if (!Certael->ActivateSession(VerifiedBinding))
 {
     // Abort protected play and surface a safe reconnect path.
 }
 
 FCertaelAuthorizedAction Action =
-    Certael->AuthorizeAction(TEXT("inventory.craft"), 1, TypedPayload);
+    Certael->AuthorizeAction(
+        TEXT("inventory.craft"), TEXT("example.Craft.v1"), 1, TypedPayload);
 GameNetwork->SendAuthoritativeAction(Action.Envelope);
 ```
 
 The subsystem is also Blueprint-callable. Build payload bytes from typed C++ or
-generated schema structures; do not ask Blueprint users to hand-author security-
-critical JSON.
+generated schema structures; session activation is typed and Blueprint users do
+not hand-author security-critical JSON.
 
 ## Platform and release checklist
 

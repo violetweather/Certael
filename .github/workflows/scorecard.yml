@@ -1,0 +1,26 @@
+name: scorecard
+
+on:
+  branch_protection_rule:
+  schedule: [{ cron: "31 3 * * 1" }]
+  workflow_dispatch:
+
+permissions: read-all
+
+jobs:
+  analysis:
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with: { persist-credentials: false }
+      - uses: ossf/scorecard-action@99c09fe975337306107572b4fdf4db224cf8e2f2
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          publish_results: true
+      - uses: github/codeql-action/upload-sarif@1ad29ea4a422cce9a242a9fae469541dcd08addc
+        with: { sarif_file: results.sarif }

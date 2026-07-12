@@ -1,0 +1,25 @@
+name: Bug report
+description: Report a reproducible non-security defect.
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: checkboxes
+    attributes:
+      label: Security check
+      options:
+        - label: This report does not disclose a security vulnerability or secret.
+          required: true
+  - type: input
+    attributes: { label: Certael version or commit }
+    validations: { required: true }
+  - type: dropdown
+    attributes:
+      label: Component
+      options: [Rust runtime, C ABI, Server SDK, Backend, Godot, Unity, Unreal, Build or release, Documentation]
+    validations: { required: true }
+  - type: textarea
+    attributes: { label: Reproduction, description: Include the smallest safe reproduction and expected result. }
+    validations: { required: true }
+  - type: textarea
+    attributes: { label: Environment, description: OS, architecture, engine version, and relevant server versions. }
+    validations: { required: true }

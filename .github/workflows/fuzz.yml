@@ -1,0 +1,18 @@
+name: fuzz
+
+on:
+  schedule: [{ cron: "13 2 * * *" }]
+  workflow_dispatch:
+
+permissions: { contents: read }
+
+jobs:
+  action-envelope:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with: { persist-credentials: false }
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
+        with: { toolchain: nightly }
+      - run: cargo install cargo-fuzz --version 0.13.2 --locked
+      - run: cargo fuzz run action_envelope --fuzz-dir fuzz -- -max_total_time=600

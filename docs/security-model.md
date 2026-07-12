@@ -25,7 +25,8 @@ enforcement. It does not turn the client into a trusted authority.
 
 TLS protects transport. Game servers use mTLS and short-lived OAuth credentials.
 Bootstrap tickets expire after 60 seconds, are single-use, and are bound to an
-ephemeral client public key, game, environment, player, match, server, and build.
+ephemeral client public key, tenant, game, environment, player, match, server,
+build, protection profile, protocol range, and scoped signing key.
 Proof of possession prevents basic ticket replay but is not evidence that an
 action is legitimate.
 
