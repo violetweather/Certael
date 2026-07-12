@@ -84,9 +84,9 @@ jobs:
         shell: pwsh
         run: |
           $extension = "engines/godot/addons/certael/bin/certael.windows.template_release.x86_64.dll"
-          $runtime = "target/x86_64-pc-windows-msvc/release/certael_c_api.dll"
+          $runtime = "engines/godot/addons/certael/bin/certael_c_api.dll"
           if (-not (Test-Path $extension)) { throw "Missing Godot extension: $extension" }
-          if (-not (Test-Path $runtime)) { throw "Missing Certael runtime: $runtime" }
+          if (-not (Test-Path $runtime)) { throw "Missing packaged Certael runtime: $runtime" }
 
   protocol-conformance:
     runs-on: ubuntu-24.04
