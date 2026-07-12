@@ -13,5 +13,8 @@ if not os.path.isfile(native_file):
     print("Certael native library is missing: {}. Run the repository build script first.".format(native_file))
     Exit(1)
 env.Append(LIBPATH=[native_dir], LIBS=["certael_c_api"])
-library = env.SharedLibrary("addons/certael/bin/certael{}".format(env["suffix"]), source=sources)
+library = env.SharedLibrary(
+    "addons/certael/bin/certael{}{}".format(env["suffix"], env["SHLIBSUFFIX"]),
+    source=sources,
+)
 Default(library)
