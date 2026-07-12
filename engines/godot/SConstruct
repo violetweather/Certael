@@ -11,14 +11,20 @@ env.Append(CPPPATH=["src", "../../runtime/certael-c-api/include"])
 sources = Glob("src/*.cpp")
 if env["platform"] == "windows":
     native_dir = os.environ.get("CERTAEL_NATIVE_DIR", "../../target/x86_64-pc-windows-msvc/release")
-    native_file = os.path.join(native_dir, "certael_c_api.lib")
+    # Link the cdylib import library, not Rust's staticlib. The static archive
+    # requires every Rust/Windows system dependency to be repeated here and is
+    # not the artifact distributed with the engine package.
+    native_file = os.path.join(native_dir, "certael_c_api.dll.lib")
 else:
     native_dir = os.environ.get("CERTAEL_NATIVE_DIR", "../../target/release")
     native_file = os.path.join(native_dir, "libcertael_c_api.a")
 if not os.path.isfile(native_file):
     print("Certael native library is missing: {}. Run the repository build script first.".format(native_file))
     Exit(1)
-env.Append(LIBPATH=[native_dir], LIBS=["certael_c_api"])
+if env["platform"] == "windows":
+    env.Append(LIBS=[env.File(native_file)])
+else:
+    env.Append(LIBPATH=[native_dir], LIBS=["certael_c_api"])
 library = env.SharedLibrary(
     "addons/certael/bin/certael{}{}".format(env["suffix"], env["SHLIBSUFFIX"]),
     source=sources,
