@@ -49,6 +49,10 @@ build_native() {
 
 build_godot() {
   require scons; fetch_godot_cpp
+  scons --version | grep -Fq "$SCONS_VERSION" || {
+    echo "Certael requires SCons $SCONS_VERSION. Install it with: python3 -m pip install scons==$SCONS_VERSION" >&2
+    exit 2
+  }
   local platform
   case "$(uname -s)" in Darwin) platform=macos ;; Linux) platform=linux ;; esac
   local arch="$(uname -m)"

@@ -133,7 +133,7 @@ jobs:
           git -C engines/godot/godot-cpp fetch --depth 1 origin "$GODOT_CPP_COMMIT"
           git -C engines/godot/godot-cpp checkout --detach "$GODOT_CPP_COMMIT"
           test "$(git -C engines/godot/godot-cpp rev-parse HEAD)" = "$GODOT_CPP_COMMIT"
-          python -m pip install scons==4.8.1
+          python -m pip install "scons==$SCONS_VERSION"
           if [[ "${{ runner.os }}" == "Windows" ]]; then
             import="target/${{ matrix.target }}/release/certael_c_api.lib"
             test -f "$import" || cp "target/${{ matrix.target }}/release/certael_c_api.dll.lib" "$import"

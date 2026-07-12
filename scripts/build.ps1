@@ -31,7 +31,13 @@ function Get-GodotCpp {
     if ((git -C $Path rev-parse HEAD) -ne $GODOT_CPP_COMMIT) { throw "godot-cpp pin mismatch" }
 }
 function Build-Godot {
-    if (-not (Get-Command scons -ErrorAction SilentlyContinue)) { throw "Missing SCons. Install it with py -m pip install scons." }
+    if (-not (Get-Command scons -ErrorAction SilentlyContinue)) {
+        throw "Missing SCons. Install the pinned version with: py -m pip install scons==$SCONS_VERSION"
+    }
+    $SconsDetails = (scons --version | Out-String)
+    if ($SconsDetails -notmatch [regex]::Escape($SCONS_VERSION)) {
+        throw "Certael requires SCons $SCONS_VERSION. Install it with: py -m pip install scons==$SCONS_VERSION"
+    }
     Get-GodotCpp
     $PreviousNativeDirectory = $env:CERTAEL_NATIVE_DIR
     $env:CERTAEL_NATIVE_DIR = "$Root/target/$Target/release"
