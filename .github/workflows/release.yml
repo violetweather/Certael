@@ -75,6 +75,10 @@ jobs:
         with: { persist-credentials: false }
       - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
         with: { dotnet-version: 10.0.x }
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
+        with: { toolchain: 1.97.0 }
+      - name: Build native runtime for managed adapter tests
+        run: cargo build --locked --release -p certael-c-api
       - run: dotnet test Certael.slnx -c Release --warnaserror
       - run: dotnet pack server-sdk/Certael.Server/Certael.Server.csproj -c Release -o artifacts
       - run: |
@@ -135,8 +139,11 @@ jobs:
           fi
           export CERTAEL_NATIVE_DIR="$GITHUB_WORKSPACE/target/${{ matrix.target }}/release"
           cd engines/godot
-          extra=(); [[ "${{ runner.os }}" == "Windows" ]] && extra+=(use_mingw=no)
-          scons platform=${{ matrix.platform }} arch=${{ matrix.arch }} target=template_release "${extra[@]}" -j2
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            scons platform=${{ matrix.platform }} arch=${{ matrix.arch }} target=template_release use_mingw=no -j2
+          else
+            scons platform=${{ matrix.platform }} arch=${{ matrix.arch }} target=template_release -j2
+          fi
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: certael-godot-${{ matrix.artifact }}

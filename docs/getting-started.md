@@ -48,8 +48,9 @@ credentials in production.
 ## 2. Install or build the client runtime
 
 Normal game developers should install a verified prebuilt engine package and do
-not need Rust, C++, SCons, `godot-cpp`, MinGW, or MSVC. Until pre-release
-packages are published, maintainers can build the native runtime with:
+not need Rust, C++, SCons, `godot-cpp`, MinGW, or MSVC. Follow the
+[prebuilt installation guide](installing-prebuilt.md). Maintainers can build the
+native runtime from source with:
 
 ```bash
 ./scripts/build.sh native --configuration Release
