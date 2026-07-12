@@ -124,7 +124,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
         with: { toolchain: 1.97.0, targets: "${{ matrix.target }}" }
       - run: cargo build --locked --release -p certael-c-api --target ${{ matrix.target }}
-      - shell: bash
+      - name: Prepare pinned godot-cpp dependency
+        shell: bash
         run: |
           set -euo pipefail
           source build/dependencies.env
@@ -137,13 +138,56 @@ jobs:
             import="target/${{ matrix.target }}/release/certael_c_api.lib"
             test -f "$import" || cp "target/${{ matrix.target }}/release/certael_c_api.dll.lib" "$import"
           fi
+      - name: Build Godot adapter
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
           export CERTAEL_NATIVE_DIR="$GITHUB_WORKSPACE/target/${{ matrix.target }}/release"
           cd engines/godot
-          if [[ "${{ runner.os }}" == "Windows" ]]; then
-            scons platform=${{ matrix.platform }} arch=${{ matrix.arch }} target=template_release use_mingw=no -j2
-          else
-            scons platform=${{ matrix.platform }} arch=${{ matrix.arch }} target=template_release -j2
-          fi
+          scons platform=${{ matrix.platform }} arch=${{ matrix.arch }} target=template_release -j2
+      - name: Build Godot adapter with MSVC
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (-not (Test-Path $vswhere)) {
+            throw "vswhere.exe is missing; Visual Studio Build Tools are required"
+          }
+          $installation = & $vswhere -latest -products * `
+            -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+            -property installationPath
+          if (-not $installation) {
+            throw "No Visual Studio installation with the MSVC x64 tools was found"
+          }
+          $devCmd = Join-Path $installation "Common7\Tools\VsDevCmd.bat"
+          $command = "call `"$devCmd`" -no_logo -arch=amd64 -host_arch=amd64 && set"
+          $environment = & $env:ComSpec /d /s /c $command
+          if ($LASTEXITCODE -ne 0) {
+            throw "Visual Studio developer environment setup failed"
+          }
+          foreach ($line in $environment) {
+            $pair = $line -split "=", 2
+            if ($pair.Length -eq 2) {
+              [Environment]::SetEnvironmentVariable($pair[0], $pair[1], "Process")
+            }
+          }
+          Remove-Item Env:MINGW_PREFIX -ErrorAction SilentlyContinue
+          $compiler = (Get-Command cl.exe -ErrorAction Stop).Source
+          if ($compiler -notlike "*Microsoft Visual Studio*") {
+            throw "Expected MSVC cl.exe, found: $compiler"
+          }
+          Write-Host "Using MSVC compiler: $compiler"
+          $env:CERTAEL_NATIVE_DIR = "$env:GITHUB_WORKSPACE\target\${{ matrix.target }}\release"
+          Push-Location engines/godot
+          try {
+            python -m SCons platform=${{ matrix.platform }} arch=${{ matrix.arch }} `
+              target=template_release use_mingw=no -j2
+          }
+          finally {
+            Pop-Location
+          }
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: certael-godot-${{ matrix.artifact }}
