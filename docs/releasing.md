@@ -19,7 +19,7 @@ provenance. The workflow also creates keyless Sigstore bundles for release files
 and signs the container by immutable digest; these do not replace Windows
 Authenticode, NuGet package signing, or Apple notarization.
 
-As of 2026-07-12, hosted jobs still terminate before their first step, consistent
-with the repository's unresolved GitHub Actions billing lock. Do not configure
-required checks until at least one run produces real check names, and do not tag
-a release from locally built artifacts.
+The first `v0.1.0-alpha.1` packaging attempt exposed release-only failures and did
+not publish a GitHub pre-release. Never move or reuse a failed release tag. Fix
+the pipeline on a protected branch, verify it, and issue the next version tag.
+Consumers should follow the [prebuilt installation guide](installing-prebuilt.md).

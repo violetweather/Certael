@@ -5,11 +5,9 @@ signed request envelopes; they never authorize gameplay state. Keep the envelope
 on the game's authenticated client-to-server channel rather than sending it
 directly to a gameplay database or trusting it locally.
 
-> **Current release status:** package layouts and release automation exist, but
-> no package is certified for 1.0 yet. Until a verified `v0.*` pre-release is
-> published successfully, use the source-build scripts and treat the result as a
-> development artifact. Never download native libraries from an unofficial
-> mirror.
+> **Current release status:** verified `v0.*` packages are development previews,
+> not certified 1.0 artifacts. Follow the [prebuilt installation guide](installing-prebuilt.md)
+> and never download native libraries from an unofficial mirror.
 
 ## Common lifecycle
 

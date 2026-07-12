@@ -66,6 +66,7 @@ loopback interface. It is not a production configuration.
 
 - [Documentation home](docs/README.md)
 - [Secure quickstart](docs/getting-started.md)
+- [Install a prebuilt engine package](docs/installing-prebuilt.md)
 - [Session and action authorization](docs/authorization.md)
 - [Native C and C++ API](docs/native-api.md)
 - [Godot, Unity, and Unreal integration](docs/engine-support.md)
