@@ -6,7 +6,7 @@ then add engine adapters and game-specific rules.
 
 ## Integrator path
 
-1. Read the [security model](security-model.md).
+1. Read the [security model](security-model.md) and [normative security contract](security-contract.md).
 2. Complete the [secure quickstart](getting-started.md).
 3. Implement the full [session and action authorization flow](authorization.md).
 4. Add the relevant [engine adapter](engine-support.md).
@@ -19,14 +19,24 @@ then add engine adapters and game-specific rules.
 | Guide | Audience | Covers |
 |---|---|---|
 | [Security model](security-model.md) | security and gameplay engineers | boundaries, threats, enforcement limits |
+| [Security contract](security-contract.md) | integrators and auditors | normative guarantees, exclusions, and failure rules |
 | [Quickstart](getting-started.md) | backend engineers | local stack, builds, first integration |
 | [Authorization](authorization.md) | networking and backend engineers | bootstrap, binding, proofs, action handling |
+| [Native ABI](native-api.md) | native and engine engineers | C ownership, buffer rules, client runtime, and server verifier |
 | [Engine support](engine-support.md) | client engineers | Godot, Unity, Unreal installation and calls |
 | [Rules](rules.md) | gameplay and security engineers | YAML packs, callbacks, signing, rollout |
 | [Protections](protections.md) | gameplay and security engineers | rate, movement, visibility, economy, behavior, integrity |
 | [Operations](operations.md) | platform and SRE teams | identity, keys, persistence, rollout, privacy |
+| [Incident response](incident-response.md) | operators and security teams | containment, recovery, and disclosure runbooks |
+| [Release process](releasing.md) | maintainers | signed pre-release artifacts and provenance |
 | [Troubleshooting](troubleshooting.md) | all integrators | common setup and runtime failures |
+| [Verification](testing.md) | contributors and auditors | local, fuzz, load, persistence, and engine tests |
 | [Acceptance status](acceptance-status.md) | evaluators | verified and outstanding criteria |
+| [Standards matrix](standards-matrix.md) | maintainers and auditors | SSDF, ASVS, SLSA, OpenSSF, SBOM, and disclosure evidence gates |
+
+Architecture decisions are recorded under [`docs/adr`](adr/). They explain the
+locked trust boundary and canonical protocol decision; changing either requires
+a new superseding ADR and compatibility/security review.
 
 ## Non-negotiable integration rule
 

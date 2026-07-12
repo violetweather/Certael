@@ -26,7 +26,7 @@ public sealed class Ed25519ActionProofVerifier : IActionProofVerifier
                 SignatureAlgorithm.Ed25519,
                 ephemeralPublicKey,
                 KeyBlobFormat.RawPublicKey);
-            byte[] canonical = Canonicalize(action);
+            byte[] canonical = BinaryActionEnvelopeCodec.EncodeSigned(action);
             byte[] signed = new byte[Domain.Length + canonical.Length];
             Domain.CopyTo(signed, 0);
             canonical.CopyTo(signed, Domain.Length);
@@ -36,46 +36,6 @@ public sealed class Ed25519ActionProofVerifier : IActionProofVerifier
         catch (ArgumentException) { return false; }
     }
 
-    internal static byte[] Canonicalize<TRequest>(AuthorizedAction<TRequest> action)
-    {
-        using var stream = new MemoryStream(160 + action.RawPayload.Length);
-        WriteLengthPrefixed(stream, Encoding.UTF8.GetBytes(action.SessionId));
-        WriteUInt64(stream, action.Sequence);
-        Span<byte> guid = stackalloc byte[16];
-        action.ActionId.TryWriteBytes(guid, bigEndian: true, out _);
-        stream.Write(guid);
-        WriteLengthPrefixed(stream, Encoding.UTF8.GetBytes(action.ActionType));
-        WriteUInt32(stream, action.SchemaVersion);
-        WriteInt64(stream, action.ClientMonotonicMicros);
-        WriteLengthPrefixed(stream, action.RawPayload.Span);
-        stream.Write(action.PreviousDigest.Span);
-        return stream.ToArray();
-    }
-
-    private static void WriteLengthPrefixed(Stream stream, ReadOnlySpan<byte> bytes)
-    {
-        WriteUInt64(stream, checked((ulong)bytes.Length));
-        stream.Write(bytes);
-    }
-
-    private static void WriteUInt64(Stream stream, ulong value)
-    {
-        Span<byte> buffer = stackalloc byte[8];
-        BinaryPrimitives.WriteUInt64BigEndian(buffer, value);
-        stream.Write(buffer);
-    }
-
-    private static void WriteInt64(Stream stream, long value)
-    {
-        Span<byte> buffer = stackalloc byte[8];
-        BinaryPrimitives.WriteInt64BigEndian(buffer, value);
-        stream.Write(buffer);
-    }
-
-    private static void WriteUInt32(Stream stream, uint value)
-    {
-        Span<byte> buffer = stackalloc byte[4];
-        BinaryPrimitives.WriteUInt32BigEndian(buffer, value);
-        stream.Write(buffer);
-    }
+    internal static byte[] Canonicalize<TRequest>(AuthorizedAction<TRequest> action) =>
+        BinaryActionEnvelopeCodec.EncodeSigned(action);
 }

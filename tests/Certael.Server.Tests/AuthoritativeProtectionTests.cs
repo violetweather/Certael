@@ -43,7 +43,7 @@ public sealed class AuthoritativeProtectionTests
         var expected = new ProtectedBuildManifest("build", [new("game.bin", 10, expectedHash)]);
         var report = new UserModeIntegrityReport("other", new byte[32],
             ImmutableArray<ProtectedBuildFile>.Empty, [], true, now);
-        IReadOnlyList<Finding> findings = verifier.Evaluate(report, expected, "tenant", "game", "prod",
+        IReadOnlyList<Finding> findings = verifier.Evaluate(report, new byte[32], expected, "tenant", "game", "prod",
             "session", "player", new byte[32], now);
         Verdict verdict = new VerdictEngine(TimeProvider.System).Evaluate(findings);
         Assert.Equal(FindingTrust.ClientOnly, findings[0].Trust);

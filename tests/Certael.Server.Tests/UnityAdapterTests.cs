@@ -1,5 +1,5 @@
-using System.Text.Json;
 using Certael.Unity;
+using Certael.Server.Actions;
 
 namespace Certael.Server.Tests;
 
@@ -11,14 +11,16 @@ public sealed class UnityAdapterTests
         using var client = new CertaelClient();
         Assert.Equal(32, client.CreateSessionPublicKey().Length);
         Assert.Equal(64, client.SignRedemption(Guid.NewGuid(), new byte[32]).Length);
-        client.ActivateSession("""
-            {"session_id":"unity-session","game_id":"game","environment_id":"test","match_id":"match","build_id":"build","expires_at_unix":4102444800}
-            """, 4);
+        client.ActivateSession(new CertaelSessionBinding {
+            SessionId = "unity-session", GameId = "game", EnvironmentId = "test",
+            MatchId = "match", BuildId = "build", ExpiresAtUnix = 4102444800,
+            InitialSequence = 4, BindingDigest = Enumerable.Repeat((byte)7, 32).ToArray()
+        });
 
-        byte[] envelope = client.AuthorizeAction("inventory.craft", 1, [1, 2, 3]);
-        using JsonDocument json = JsonDocument.Parse(envelope);
-        Assert.Equal("unity-session", json.RootElement.GetProperty("session_id").GetString());
-        Assert.Equal(4UL, json.RootElement.GetProperty("sequence").GetUInt64());
-        Assert.Equal("inventory.craft", json.RootElement.GetProperty("action_type").GetString());
+        byte[] envelope = client.AuthorizeAction("inventory.craft", "example.Craft.v1", 1, [1, 2, 3]);
+        AuthorizedAction<byte[]> action = BinaryActionEnvelopeCodec.Decode(envelope, DateTimeOffset.UtcNow);
+        Assert.Equal("unity-session", action.SessionId);
+        Assert.Equal(4UL, action.Sequence);
+        Assert.Equal("inventory.craft", action.ActionType);
     }
 }

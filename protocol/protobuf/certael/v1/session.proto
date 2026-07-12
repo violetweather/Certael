@@ -43,4 +43,8 @@ message ActiveSession {
   bytes rule_pack_digest = 4;
   bytes build_manifest_digest = 5;
   repeated string required_capabilities = 6;
+  bytes session_binding_digest = 7;
+  uint32 protocol_minimum = 8;
+  uint32 protocol_maximum = 9;
+  string protection_profile_id = 10;
 }

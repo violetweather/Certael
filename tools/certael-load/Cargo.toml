@@ -1,0 +1,11 @@
+[package]
+name = "certael-load"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+certael-core = { path = "../../runtime/certael-core" }
+ed25519-dalek.workspace = true
+sha2.workspace = true

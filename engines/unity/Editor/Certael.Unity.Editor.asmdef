@@ -1,0 +1,6 @@
+{
+  "name": "Certael.Unity.Editor",
+  "references": ["Certael.Unity"],
+  "includePlatforms": ["Editor"],
+  "autoReferenced": true
+}

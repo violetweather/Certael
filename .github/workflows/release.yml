@@ -1,0 +1,240 @@
+name: release
+
+on:
+  push:
+    tags: ["v0.*"]
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            library: libcertael_c_api.so
+            artifact: linux-x86_64
+          - os: windows-2025
+            target: x86_64-pc-windows-msvc
+            library: certael_c_api.dll
+            artifact: windows-x86_64
+          - os: macos-15
+            target: aarch64-apple-darwin
+            library: libcertael_c_api.dylib
+            artifact: macos-arm64
+          - os: macos-15
+            target: x86_64-apple-darwin
+            library: libcertael_c_api.dylib
+            artifact: macos-x86_64
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with: { persist-credentials: false }
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
+        with:
+          toolchain: 1.97.0
+          targets: ${{ matrix.target }}
+      - run: cargo build --locked --release -p certael-c-api --target ${{ matrix.target }}
+      - name: Assemble native package
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "artifacts/certael-native-${{ matrix.artifact }}/include" "artifacts/certael-native-${{ matrix.artifact }}/lib"
+          cp runtime/certael-c-api/include/certael.h runtime/certael-c-api/include/certael.hpp "artifacts/certael-native-${{ matrix.artifact }}/include/"
+          cp LICENSE "artifacts/certael-native-${{ matrix.artifact }}/LICENSE"
+          printf '%s\n' "$GITHUB_SHA" > "artifacts/certael-native-${{ matrix.artifact }}/SOURCE_COMMIT"
+          cp "target/${{ matrix.target }}/release/${{ matrix.library }}" "artifacts/certael-native-${{ matrix.artifact }}/lib/"
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            find "target/${{ matrix.target }}/release" -maxdepth 1 -name '*.lib' -exec cp {} "artifacts/certael-native-${{ matrix.artifact }}/lib/" \;
+          else
+            cp "target/${{ matrix.target }}/release/libcertael_c_api.a" "artifacts/certael-native-${{ matrix.artifact }}/lib/"
+          fi
+      - uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661
+        with: { subject-path: "artifacts/certael-native-${{ matrix.artifact }}/**" }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: certael-native-${{ matrix.artifact }}
+          path: artifacts/certael-native-${{ matrix.artifact }}
+          if-no-files-found: error
+
+  managed:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with: { persist-credentials: false }
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
+        with: { dotnet-version: 10.0.x }
+      - run: dotnet test Certael.slnx -c Release --warnaserror
+      - run: dotnet pack server-sdk/Certael.Server/Certael.Server.csproj -c Release -o artifacts
+      - run: |
+          cp LICENSE artifacts/LICENSE
+          printf '%s\n' "$GITHUB_SHA" > artifacts/SOURCE_COMMIT
+      - run: |
+          dotnet tool install Microsoft.Sbom.DotNetTool --version 4.1.5 --tool-path .tools
+          .tools/sbom-tool generate -b artifacts -bc . -pn Certael -pv "${GITHUB_REF_NAME#v}" -ps Certael -nsb "https://github.com/${GITHUB_REPOSITORY}"
+      - uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661
+        with: { subject-path: "artifacts/**" }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with: { name: certael-managed, path: artifacts, if-no-files-found: error }
+
+  godot:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            platform: linux
+            arch: x86_64
+            artifact: linux-x86_64
+          - os: windows-2025
+            target: x86_64-pc-windows-msvc
+            platform: windows
+            arch: x86_64
+            artifact: windows-x86_64
+          - os: macos-15
+            target: aarch64-apple-darwin
+            platform: macos
+            arch: arm64
+            artifact: macos-arm64
+          - os: macos-15
+            target: x86_64-apple-darwin
+            platform: macos
+            arch: x86_64
+            artifact: macos-x86_64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with: { persist-credentials: false }
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
+        with: { toolchain: 1.97.0, targets: "${{ matrix.target }}" }
+      - run: cargo build --locked --release -p certael-c-api --target ${{ matrix.target }}
+      - shell: bash
+        run: |
+          set -euo pipefail
+          source build/dependencies.env
+          git clone --filter=blob:none "$GODOT_CPP_REPOSITORY" engines/godot/godot-cpp
+          git -C engines/godot/godot-cpp fetch --depth 1 origin "$GODOT_CPP_COMMIT"
+          git -C engines/godot/godot-cpp checkout --detach "$GODOT_CPP_COMMIT"
+          test "$(git -C engines/godot/godot-cpp rev-parse HEAD)" = "$GODOT_CPP_COMMIT"
+          python -m pip install scons==4.8.1
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            import="target/${{ matrix.target }}/release/certael_c_api.lib"
+            test -f "$import" || cp "target/${{ matrix.target }}/release/certael_c_api.dll.lib" "$import"
+          fi
+          export CERTAEL_NATIVE_DIR="$GITHUB_WORKSPACE/target/${{ matrix.target }}/release"
+          cd engines/godot
+          extra=(); [[ "${{ runner.os }}" == "Windows" ]] && extra+=(use_mingw=no)
+          scons platform=${{ matrix.platform }} arch=${{ matrix.arch }} target=template_release "${extra[@]}" -j2
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: certael-godot-${{ matrix.artifact }}
+          path: engines/godot/addons/certael/bin
+          if-no-files-found: error
+
+  container:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with: { persist-credentials: false }
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
+      - id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
+        with:
+          context: .
+          file: backend/Certael.Api/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/certael-api:${{ github.ref_name }}
+          build-args: SOURCE_REVISION=${{ github.sha }}
+          provenance: mode=max
+          sbom: true
+      - uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661
+        with:
+          subject-name: ghcr.io/${{ github.repository_owner }}/certael-api
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with: { cosign-release: v3.0.6 }
+      - name: Sign container by immutable digest
+        run: cosign sign --yes "ghcr.io/${{ github.repository_owner }}/certael-api@${{ steps.build.outputs.digest }}"
+
+  publish:
+    needs: [native, managed, godot, container]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with: { persist-credentials: false }
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with: { path: downloaded }
+      - name: Assemble engine SDKs
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          mkdir -p staging/godot/addons staging/unity staging/unreal
+          cp LICENSE staging/godot/LICENSE
+          cp LICENSE staging/unity/LICENSE
+          cp LICENSE staging/unreal/LICENSE
+          printf '%s\n' "$GITHUB_SHA" | tee staging/godot/SOURCE_COMMIT staging/unity/SOURCE_COMMIT staging/unreal/SOURCE_COMMIT >/dev/null
+          cp -R engines/godot/addons/certael staging/godot/addons/
+          mkdir -p staging/godot/addons/certael/bin
+          find downloaded/certael-godot-* -type f -exec cp {} staging/godot/addons/certael/bin/ \;
+          cp -R engines/unity/. staging/unity/
+          mkdir -p staging/unity/Runtime/Plugins/{Windows,Linux} staging/unity/Runtime/Plugins/macOS/{arm64,x86_64}
+          cp downloaded/certael-native-windows-x86_64/lib/certael_c_api.dll staging/unity/Runtime/Plugins/Windows/
+          cp downloaded/certael-native-linux-x86_64/lib/libcertael_c_api.so staging/unity/Runtime/Plugins/Linux/
+          cp downloaded/certael-native-macos-arm64/lib/libcertael_c_api.dylib staging/unity/Runtime/Plugins/macOS/arm64/
+          cp downloaded/certael-native-macos-x86_64/lib/libcertael_c_api.dylib staging/unity/Runtime/Plugins/macOS/x86_64/
+          cp -R engines/unreal/Certael/. staging/unreal/
+          mkdir -p staging/unreal/Native/{include,Win64,Linux} staging/unreal/Binaries/Win64
+          cp runtime/certael-c-api/include/* staging/unreal/Native/include/
+          cp downloaded/certael-native-windows-x86_64/lib/* staging/unreal/Native/Win64/
+          cp downloaded/certael-native-windows-x86_64/lib/certael_c_api.dll staging/unreal/Binaries/Win64/
+          cp downloaded/certael-native-linux-x86_64/lib/* staging/unreal/Native/Linux/
+          mkdir -p release
+          (cd staging/godot && zip -qr "../../release/certael-godot-4.7-${GITHUB_REF_NAME}.zip" .)
+          (cd staging/unity && tar -czf "../../release/certael-unity-6000.3-${GITHUB_REF_NAME}.tgz" .)
+          (cd staging/unreal && zip -qr "../../release/certael-unreal-5.8-${GITHUB_REF_NAME}.zip" .)
+      - name: Archive and checksum
+        run: |
+          set -euo pipefail
+          for directory in downloaded/*; do
+            name="$(basename "$directory")"
+            tar -C "$directory" -czf "release/${name}-${GITHUB_REF_NAME}.tar.gz" .
+          done
+          (cd release && sha256sum * > checksums-sha256.txt)
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with: { cosign-release: v3.0.6 }
+      - name: Keyless-sign release files
+        run: |
+          set -euo pipefail
+          for artifact in release/*; do
+            cosign sign-blob --yes --bundle "${artifact}.sigstore.json" "$artifact"
+          done
+      - uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661
+        with: { subject-path: "release/**" }
+      - name: Publish pre-release
+        env: { GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
+        run: gh release create "$GITHUB_REF_NAME" release/* --repo "$GITHUB_REPOSITORY" --verify-tag --prerelease --generate-notes

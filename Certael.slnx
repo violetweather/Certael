@@ -12,4 +12,7 @@
   <Folder Name="/tests/">
     <Project Path="tests/Certael.Server.Tests/Certael.Server.Tests.csproj" />
   </Folder>
+  <Folder Name="/samples/">
+    <Project Path="samples/reference-game/Certael.ReferenceGame.csproj" />
+  </Folder>
 </Solution>

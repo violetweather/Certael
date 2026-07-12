@@ -7,15 +7,18 @@ observability, and tested recovery.
 
 ## Workload identity
 
-Ticket issuance and session renewal require both:
+Ticket issuance, session renewal/revocation, audit reads, and administrative
+operations require both:
 
 - a valid OAuth/JWT workload identity with audience `certael-api`; and
 - a presented client certificate.
 
-Tokens must carry the required `sessions:issue` or `sessions:renew` scope and
-exact `tenant_id` and `environment_id` claims. Issue one short-lived identity per
-game/environment/workload. Do not reuse credentials between development and
-production or place them in clients.
+Tokens must carry the operation's exact scope and matching `tenant_id` and
+`environment_id` claims. Supported scopes currently include `sessions:issue`,
+`sessions:renew`, `sessions:revoke`, `sessions:revoke:bulk`, and `audit:read`.
+The OAuth token must be certificate-bound through `cnf.x5t#S256`. Issue one
+short-lived identity per game/environment/workload. Do not reuse credentials
+between development and production or place them in clients.
 
 Set these configuration values outside source control:
 
@@ -23,18 +26,72 @@ Set these configuration values outside source control:
 Authentication__Authority=https://identity.example.com/
 Authentication__Audience=certael-api
 Signing__PrivateKeyPemPath=/run/secrets/certael-ticket-signing.pem
+Signing__ActiveKeyId=production-ticket-2026-07
+Signing__Issuer=https://certael.example.com
+Signing__Audience=certael-session
 ConnectionStrings__Postgres=<secret reference>
 ConnectionStrings__Redis=<secret reference>
+OTEL_EXPORTER_OTLP_ENDPOINT=https://telemetry-collector.example.com
 ```
 
-`Development__AllowInsecureServiceIdentity` must remain `false` outside isolated
-local testing. The application already refuses missing persistence and signing
-configuration outside the Development environment.
+For an overlapping rotation, configure `Signing:Keys` entries with `KeyId`,
+`PemPath`, `NotBefore`, `NotAfter`, `Usage=ticket-signing`, optional tenant and
+environment scope, and revocation status; then move `Signing:ActiveKeyId` only
+after all verifiers have the new key. A retired verification entry may contain
+public-only PEM material. Rehearse activation, overlap, rollback, and emergency
+revocation before production use.
+
+Example overlapping configuration:
+
+```json
+{
+  "Signing": {
+    "ActiveKeyId": "ticket-2026-08",
+    "Issuer": "https://certael.example.com",
+    "Audience": "certael-session",
+    "Keys": [
+      {
+        "KeyId": "ticket-2026-07",
+        "PemPath": "/run/secrets/ticket-2026-07-public.pem",
+        "NotBefore": "2026-07-01T00:00:00Z",
+        "NotAfter": "2026-08-15T00:00:00Z",
+        "Revoked": false,
+        "Usage": "ticket-signing",
+        "TenantId": "studio",
+        "EnvironmentId": "production"
+      },
+      {
+        "KeyId": "ticket-2026-08",
+        "PemPath": "/run/secrets/ticket-2026-08-private.pem",
+        "NotBefore": "2026-08-01T00:00:00Z",
+        "NotAfter": "2026-09-15T00:00:00Z",
+        "Revoked": false,
+        "Usage": "ticket-signing",
+        "TenantId": "studio",
+        "EnvironmentId": "production"
+      }
+    ]
+  }
+}
+```
+
+Only the active entry needs private signing capability. For a managed KMS/HSM,
+replace PEM signing with `IBootstrapSigningProvider` while keeping the same key
+ID, validity, usage, tenant, environment, overlap, and revocation controls.
+
+The production executable contains no insecure service-identity bypass. Local
+integration tests must use a test identity provider and a client certificate
+whose SHA-256 thumbprint is bound to the OAuth token through the standard `cnf`
+`x5t#S256` confirmation claim. The application refuses missing persistence and
+signing configuration outside the Development environment.
 
 ## Network controls
 
-- Terminate TLS 1.2+ or newer at a trusted proxy or Kestrel and forward client
-  certificates only across an authenticated hop.
+- Terminate TLS 1.2+ or newer at Kestrel for the reference deployment. The
+  current guard reads `HttpContext.Connection.ClientCertificate`. If an operator
+  terminates mTLS at a proxy, it must add and audit explicit ASP.NET certificate
+  forwarding with a fixed trusted-proxy allowlist; never trust a public client-
+  certificate header directly.
 - Keep PostgreSQL, Redis, NATS, and ClickHouse on private networks.
 - Restrict issuance/renewal to game-server workload networks.
 - Apply per-identity and per-tenant limits in addition to the redemption
@@ -45,6 +102,9 @@ configuration outside the Development environment.
 ## Keys and certificates
 
 - Store ticket and rule-pack signing keys in a KMS/HSM or managed secret store.
+- Implement `IBootstrapSigningProvider` for the selected KMS/HSM so stable
+  production deployments do not import private key bytes into the API process;
+  the PEM-file provider is intended for development and controlled migration.
 - Separate ticket, rule, artifact, and environment signing keys.
 - Publish key IDs and overlapping verification keys before rotation.
 - Rotate client certificates and OAuth credentials automatically.
@@ -74,6 +134,12 @@ Test these failures regularly:
 
 ## Observability
 
+Set `OTEL_EXPORTER_OTLP_ENDPOINT` to enable OTLP export. Without it, Certael
+creates standard `ActivitySource` and `Meter` instruments but sends nothing to
+an external collector. The API exports ASP.NET Core traces and metrics, runtime
+metrics, structured logs, Certael action outcome/latency counters, and session
+operation counters. Health probes are excluded from request traces.
+
 At minimum, measure by tenant, game, environment, build, action type, and public
 reason:
 
@@ -88,6 +154,31 @@ reason:
 
 Alert on changes from established baselines, not only absolute thresholds. Avoid
 high-cardinality player IDs in metric labels.
+
+## Administrative session revocation
+
+Revoke one bound session with:
+
+```text
+POST /v1/sessions/{sessionId}/revoke
+scope: sessions:revoke
+```
+
+Emergency bulk revocation uses:
+
+```text
+POST /v1/admin/sessions/revoke
+scope: sessions:revoke:bulk
+```
+
+The body requires `tenantId`, `environmentId`, and a human-readable `reason`.
+Optional `gameId`, `buildId`, `signingKeyId`, and `authoritativeServerId` fields
+narrow the selector. Omitting all optional selectors revokes every active
+session in that tenant/environment, so reserve this scope for emergency
+operators. The mutation is rate-limited and records operator, selector digest,
+reason, request ID, source network, workload identity, timestamp, outcome, and
+result digest in the tenant-isolated audit log. The authenticated response
+returns the affected count.
 
 ## Privacy and enforcement
 

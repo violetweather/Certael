@@ -15,6 +15,7 @@ public sealed class ActionAdmissionTests
         byte[] one = SHA256.HashData("one"u8);
         byte[] two = SHA256.HashData("two"u8);
         byte[] three = SHA256.HashData("three"u8);
+        byte[] four = SHA256.HashData("four"u8);
         CancellationToken token = TestContext.Current.CancellationToken;
 
         Assert.True((await store.TryAdmitAsync(new("s", "move", 1, zero, one, now), policy, token)).Allowed);
@@ -26,6 +27,6 @@ public sealed class ActionAdmissionTests
         Assert.Equal("ACTION_RATE_LIMITED", (await store.TryAdmitAsync(
             new("s", "move", 3, two, three, now), policy, token)).PublicReason);
         Assert.True((await store.TryAdmitAsync(
-            new("s", "move", 3, two, three, now.AddSeconds(11)), policy, token)).Allowed);
+            new("s", "move", 4, three, four, now.AddSeconds(11)), policy, token)).Allowed);
     }
 }

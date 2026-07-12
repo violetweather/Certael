@@ -7,6 +7,39 @@ namespace Certael.Server.Tests;
 public sealed class BootstrapTicketTests
 {
     [Fact]
+    public void ClaimsEncodingIsDeterministicAndRejectsTrailingFields()
+    {
+        var claims = new BootstrapTicketClaims("issuer", "audience",
+            Guid.ParseExact("00112233445566778899aabbccddeeff", "N"), "tenant", "game", "prod",
+            "player", "match", "server", "build", "competitive", new byte[32],
+            DateTimeOffset.FromUnixTimeSeconds(1_700_000_000),
+            DateTimeOffset.FromUnixTimeSeconds(1_700_000_000),
+            DateTimeOffset.FromUnixTimeSeconds(1_700_000_060), 1, 1);
+        byte[] first = BinaryBootstrapTicketClaimsCodec.Encode(claims);
+        byte[] second = BinaryBootstrapTicketClaimsCodec.Encode(claims);
+        Assert.Equal(first, second);
+        BootstrapTicketClaims decoded = BinaryBootstrapTicketClaimsCodec.Decode(first);
+        Assert.Equal(claims.TicketId, decoded.TicketId);
+        Assert.Equal(claims.EphemeralPublicKey, decoded.EphemeralPublicKey);
+        Assert.Equal(first, BinaryBootstrapTicketClaimsCodec.Encode(decoded));
+        Assert.Throws<TicketClaimsException>(() =>
+            BinaryBootstrapTicketClaimsCodec.Decode(first.Append((byte)0).ToArray()));
+    }
+
+    [Fact]
+    public void MalformedTicketCorpusNeverEscapesAsAnUnexpectedException()
+    {
+        var random = new Random(0x71C4E7);
+        for (int index = 0; index < 10_000; index++)
+        {
+            byte[] candidate = new byte[random.Next(0, 1024)];
+            random.NextBytes(candidate);
+            try { _ = BinaryBootstrapTicketClaimsCodec.Decode(candidate); }
+            catch (TicketClaimsException) { }
+        }
+    }
+
+    [Fact]
     public async Task TicketIsBoundAndSingleUse()
     {
         using ECDsa key = ECDsa.Create(ECCurve.NamedCurves.nistP256);

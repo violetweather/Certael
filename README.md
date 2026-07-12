@@ -20,7 +20,7 @@ genre-specific heuristics.
   authoritative transaction; duplicates return the original result.
 - **Portable rules:** signed declarative packs and bounded trusted callbacks let
   each game define its own invariants.
-- **Cross-engine runtime:** a Rust core and stable C ABI back Godot, Unity, and
+- **Cross-engine runtime:** a Rust core and versioned C ABI back Godot, Unity, and
   Unreal adapters with the same envelope semantics.
 - **Explainable evidence:** every signal carries provenance; untrusted client
   integrity evidence cannot independently justify a permanent ban.
@@ -46,10 +46,13 @@ Read [Security model](docs/security-model.md) before integrating.
 
 ## Start locally
 
-Prerequisites: .NET 10, Rust stable, Docker Compose, and a supported engine when
-building an adapter.
+Repository-development prerequisites: .NET 10, the pinned Rust 1.97.0
+toolchain, Docker Compose, and a supported engine when building its adapter.
+Consumers of a published prebuilt engine package do not install Rust or a native
+compiler.
 
 ```bash
+export CERTAEL_DEV_POSTGRES_PASSWORD="$(openssl rand -hex 24)"
 docker compose -f deploy/compose/docker-compose.yml up -d
 curl --fail http://localhost:8080/healthz
 dotnet test Certael.slnx
@@ -64,12 +67,15 @@ loopback interface. It is not a production configuration.
 - [Documentation home](docs/README.md)
 - [Secure quickstart](docs/getting-started.md)
 - [Session and action authorization](docs/authorization.md)
+- [Native C and C++ API](docs/native-api.md)
 - [Godot, Unity, and Unreal integration](docs/engine-support.md)
 - [Custom game rules](docs/rules.md)
 - [Protection modules](docs/protections.md)
 - [Production operations](docs/operations.md)
 - [Troubleshooting](docs/troubleshooting.md)
 - [Acceptance status](docs/acceptance-status.md)
+- [Normative security contract](docs/security-contract.md)
+- [Release and verification](docs/releasing.md)
 
 ## Repository layout
 

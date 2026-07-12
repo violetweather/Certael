@@ -1,0 +1,4 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><Description>Authoritative reference game domain for Certael adversarial tests.</Description></PropertyGroup>
+  <ItemGroup><ProjectReference Include="../../server-sdk/Certael.Server/Certael.Server.csproj" /></ItemGroup>
+</Project>

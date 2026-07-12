@@ -11,3 +11,5 @@
 *.key
 coverage/
 artifacts/
+engines/godot/godot-cpp/
+engines/godot/addons/certael/bin/

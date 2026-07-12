@@ -9,5 +9,4 @@ crate-type = ["cdylib", "staticlib"]
 
 [dependencies]
 certael-core = { path = "../certael-core" }
-serde_json.workspace = true
 uuid.workspace = true

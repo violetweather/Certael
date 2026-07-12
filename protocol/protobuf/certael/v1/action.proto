@@ -4,15 +4,19 @@ package certael.v1;
 option csharp_namespace = "Certael.Protocol.V1";
 
 message ActionEnvelope {
-  string session_id = 1;
-  uint64 sequence = 2;
-  bytes action_id = 3;
-  string action_type = 4;
-  uint32 schema_version = 5;
-  int64 client_monotonic_micros = 6;
-  bytes payload = 7;
-  bytes previous_action_digest = 8;
-  bytes possession_proof = 9;
+  uint32 protocol_major = 1;
+  uint32 protocol_minor = 2;
+  string session_id = 3;
+  uint64 sequence = 4;
+  bytes action_id = 5;
+  string action_type = 6;
+  string request_schema = 7;
+  uint32 schema_version = 8;
+  bytes session_binding_digest = 9;
+  int64 client_monotonic_micros = 10;
+  bytes payload = 11;
+  bytes previous_action_digest = 12;
+  bytes possession_proof = 13;
 }
 
 enum ActionOutcome {

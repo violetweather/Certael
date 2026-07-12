@@ -20,12 +20,12 @@ func sign_redemption(ticket_id: PackedByteArray, challenge: PackedByteArray) -> 
 	assert(_native != null, "Call initialize first")
 	return _native.sign_redemption(ticket_id, challenge)
 
-func activate_session(verified_binding_json: String, initial_sequence: int) -> bool:
+func activate_session(verified_binding: Dictionary) -> bool:
 	assert(_native != null, "Call initialize first")
-	return _native.activate_session(verified_binding_json, initial_sequence)
+	return _native.activate_session(verified_binding)
 
 ## Returns a replay-resistant envelope containing untrusted player intent.
 ## The authoritative game server must validate and perform the action.
-func authorize_action(action_type: String, schema_version: int, payload: PackedByteArray) -> PackedByteArray:
+func authorize_action(action_type: String, request_schema: String, schema_version: int, payload: PackedByteArray) -> PackedByteArray:
 	assert(_native != null, "Call initialize first")
-	return _native.authorize_action(action_type, schema_version, payload)
+	return _native.authorize_action(action_type, request_schema, schema_version, payload)
