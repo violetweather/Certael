@@ -7,12 +7,13 @@ then add engine adapters and game-specific rules.
 ## Integrator path
 
 1. Read the [security model](security-model.md) and [normative security contract](security-contract.md).
-2. Complete the [secure quickstart](getting-started.md).
-3. Implement the full [session and action authorization flow](authorization.md).
-4. Add the relevant [engine adapter](engine-support.md).
-5. Encode invariants using [custom game rules](rules.md).
-6. Configure the reusable [protection modules](protections.md).
-7. Complete the [production operations checklist](operations.md).
+2. [Install a verified prebuilt package](installing-prebuilt.md), or use the source-build path for contributors.
+3. Complete the [secure quickstart](getting-started.md).
+4. Implement the full [session and action authorization flow](authorization.md).
+5. Add the relevant [engine adapter](engine-support.md).
+6. Encode invariants using [custom game rules](rules.md).
+7. Configure the reusable [protection modules](protections.md).
+8. Complete the [production operations checklist](operations.md).
 
 ## Reference
 
@@ -21,6 +22,7 @@ then add engine adapters and game-specific rules.
 | [Security model](security-model.md) | security and gameplay engineers | boundaries, threats, enforcement limits |
 | [Security contract](security-contract.md) | integrators and auditors | normative guarantees, exclusions, and failure rules |
 | [Quickstart](getting-started.md) | backend engineers | local stack, builds, first integration |
+| [Prebuilt installation](installing-prebuilt.md) | game developers | release downloads, verification, and engine installation |
 | [Authorization](authorization.md) | networking and backend engineers | bootstrap, binding, proofs, action handling |
 | [Native ABI](native-api.md) | native and engine engineers | C ownership, buffer rules, client runtime, and server verifier |
 | [Engine support](engine-support.md) | client engineers | Godot, Unity, Unreal installation and calls |
