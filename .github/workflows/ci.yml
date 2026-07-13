@@ -55,6 +55,12 @@ jobs:
             c++ -std=c++20 -Wall -Wextra -Werror -Iruntime/certael-c-api/include tests/native/cpp_abi_smoke.cpp target/release/libcertael_c_api.a -ldl -lpthread -lm -o /tmp/certael-cpp
           fi
           /tmp/certael-cpp
+      - name: Godot Agent codec smoke (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          c++ -std=c++20 -Wall -Wextra -Werror tests/native/godot_agent_codec_smoke.cpp -o /tmp/certael-godot-agent-codec
+          /tmp/certael-godot-agent-codec
 
   godot-windows-msvc:
     runs-on: windows-2025

@@ -73,6 +73,58 @@ func request_craft(payload: PackedByteArray) -> void:
 The named `game_network` methods are integration placeholders for the project's
 existing authenticated multiplayer transport, not methods supplied by Certael.
 
+### Optional Agent lifecycle
+
+The prebuilt Godot archive contains the matching Agent probe. The companion
+Agent application and its public trust store are installed separately; private
+signing keys never belong in the project. Set `certael/agent/required` to `true`
+only for exports that must refuse protected play when the probe is absent.
+The export plugin stages the probe as a native shared object rather than packing
+it into the PCK; test the exported player, not only the editor.
+
+The Agent must launch the game so the probe inherits a private channel. Connect
+once after `Certael.initialize()`, then send the validated hello to trusted
+server bootstrap code:
+
+```gdscript
+func begin_protected_mode() -> void:
+    if not Certael.connect_agent():
+        push_error(Certael.agent_last_error())
+        return
+    var hello := Certael.agent_hello()
+    assert(hello.agent_public_key.size() == 32)
+    assert(hello.executable_sha256.size() == 32)
+    game_network.begin_agent_session(hello)
+
+func on_agent_launch_material(policy: PackedByteArray, grant: PackedByteArray) -> void:
+    if not Certael.bind_agent_launch(policy, grant):
+        protected_mode_failed(Certael.agent_last_error())
+```
+
+For each canonical challenge returned by the server, use a worker task because
+the local challenge/report exchange blocks while the Agent gathers its bounded
+observations:
+
+```gdscript
+func relay_agent_challenge(challenge: PackedByteArray) -> void:
+    WorkerThreadPool.add_task(func() -> void:
+        var report := Certael.exchange_agent_challenge(challenge)
+        call_deferred("_submit_agent_report", report))
+
+func _submit_agent_report(report: PackedByteArray) -> void:
+    if report.is_empty():
+        protected_mode_failed(Certael.agent_last_error())
+    else:
+        game_network.submit_agent_report(report)
+```
+
+Call `Certael.shutdown_agent()` at logout or final game exit. On a server
+migration, revoke the old Agent session, disconnect, and bootstrap a newly bound
+grant. The adapter exposes `agent_state()` (`disconnected`, `ready`, `lost`, or
+`update_required`) plus `agent_last_error()` and the `agent_health_changed`
+signal. Local health is diagnostic; the signed server policy decides required,
+optional, grace, and restriction behavior.
+
 ## Unity 6000.3.16f1
 
 ### Install
