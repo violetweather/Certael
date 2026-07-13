@@ -20,6 +20,14 @@ public sealed class UnityAgentAdapterTests
             AgentHelloCodec.ReadPublicKey(hello.Concat(new byte[] { 0 }).ToArray()));
     }
 
+    [Fact]
+    public void LaunchBundleUsesCanonicalTypedEnvelope()
+    {
+        Assert.Equal("0a0301020312020405", Convert.ToHexString(
+            AgentLaunchBundleCodec.Encode([1, 2, 3], [4, 5])).ToLowerInvariant());
+        Assert.Throws<InvalidOperationException>(() => AgentLaunchBundleCodec.Encode([], [1]));
+    }
+
     private static void Bytes(Stream stream, uint field, ReadOnlySpan<byte> value)
     { Varint(stream, (ulong)field << 3 | 2); Varint(stream, (ulong)value.Length); stream.Write(value); }
 

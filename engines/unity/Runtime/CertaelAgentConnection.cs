@@ -44,13 +44,16 @@ public sealed class CertaelAgentConnection : IDisposable
         return _agentPublicKey.ToArray();
     }
 
-    public void BindAgentLaunchGrant(byte[] grantBytes)
+    public void BindAgentLaunchBundle(byte[] signedPolicy, byte[] signedGrant)
     {
-        ArgumentNullException.ThrowIfNull(grantBytes);
-        if (_channel == IntPtr.Zero || grantBytes.Length is < 1 or > 64 * 1024)
+        ArgumentNullException.ThrowIfNull(signedPolicy);
+        ArgumentNullException.ThrowIfNull(signedGrant);
+        if (_channel == IntPtr.Zero)
             throw new InvalidOperationException("Agent connection or launch grant is invalid.");
+        byte[] grantBytes = AgentLaunchBundleCodec.Encode(signedPolicy, signedGrant);
         Throw(CertaelAgentNative.certael_agent_channel_write(_channel, LaunchGrant,
             grantBytes, (nuint)grantBytes.Length));
+        Array.Clear(grantBytes, 0, grantBytes.Length);
     }
 
     public CertaelAgentHealth GetAgentHealth() => _health;
@@ -88,6 +91,29 @@ public sealed class CertaelAgentConnection : IDisposable
         _agentPublicKey = Array.Empty<byte>();
         _health = new(CertaelAgentState.Disconnected, "AGENT_NOT_CONNECTED");
         GC.SuppressFinalize(this);
+    }
+}
+
+internal static class AgentLaunchBundleCodec
+{
+    internal static byte[] Encode(ReadOnlySpan<byte> signedPolicy, ReadOnlySpan<byte> signedGrant)
+    {
+        if (signedPolicy.Length is < 1 or > 32 * 1024 || signedGrant.Length is < 1 or > 32 * 1024)
+            throw new InvalidOperationException("Signed Agent launch material is invalid.");
+        using var stream = new System.IO.MemoryStream();
+        Bytes(stream, 1, signedPolicy); Bytes(stream, 2, signedGrant);
+        if (stream.Length > 64 * 1024)
+            throw new InvalidOperationException("Agent launch bundle exceeds 64 KiB.");
+        return stream.ToArray();
+    }
+
+    private static void Bytes(System.IO.Stream stream, uint field, ReadOnlySpan<byte> value)
+    { Varint(stream, (ulong)field << 3 | 2); Varint(stream, (ulong)value.Length); stream.Write(value); }
+
+    private static void Varint(System.IO.Stream stream, ulong value)
+    {
+        while (value >= 0x80) { stream.WriteByte((byte)(value | 0x80)); value >>= 7; }
+        stream.WriteByte((byte)value);
     }
 }
 
