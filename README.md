@@ -72,6 +72,7 @@ loopback interface. It is not a production configuration.
 - [Godot, Unity, and Unreal integration](docs/engine-support.md)
 - [Custom game rules](docs/rules.md)
 - [Protection modules](docs/protections.md)
+- [Optional Certael Agent integration](docs/agent.md)
 - [Production operations](docs/operations.md)
 - [Troubleshooting](docs/troubleshooting.md)
 - [Acceptance status](docs/acceptance-status.md)

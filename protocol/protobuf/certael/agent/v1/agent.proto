@@ -1,0 +1,87 @@
+syntax = "proto3";
+package certael.agent.v1;
+
+option csharp_namespace = "Certael.Agent.Protocol.V1";
+
+enum AgentRequirementModeV1 {
+  AGENT_REQUIREMENT_MODE_DISABLED = 0;
+  AGENT_REQUIREMENT_MODE_OPTIONAL = 1;
+  AGENT_REQUIREMENT_MODE_REQUIRED = 2;
+}
+
+message AgentPolicyClaimsV1 {
+  uint32 protocol_version = 1;
+  string policy_id = 2;
+  string game_id = 3;
+  string environment_id = 4;
+  AgentRequirementModeV1 requirement_mode = 5;
+  uint32 heartbeat_seconds = 6;
+  uint32 report_seconds = 7;
+  uint32 disconnect_grace_seconds = 8;
+  string minimum_agent_version = 9;
+  int64 expires_at_unix = 10;
+}
+
+message SignedAgentPolicyV1 {
+  bytes claims = 1;
+  bytes signature = 2;
+  string key_id = 3;
+}
+
+message AgentLaunchGrantClaimsV1 {
+  uint32 protocol_version = 1;
+  string grant_id = 2;
+  string tenant_id = 3;
+  string game_id = 4;
+  string environment_id = 5;
+  string player_subject = 6;
+  string match_id = 7;
+  string build_id = 8;
+  bytes agent_public_key = 9;
+  int64 issued_at_unix = 10;
+  int64 expires_at_unix = 11;
+  bytes policy_digest = 12;
+}
+
+message SignedAgentLaunchGrantV1 {
+  bytes claims = 1;
+  bytes signature = 2;
+  string key_id = 3;
+}
+
+message AgentReportChallengeV1 {
+  string agent_session_id = 1;
+  bytes nonce = 2;
+  int64 expires_at_unix = 3;
+}
+
+message IntegrityObservationV1 {
+  string code = 1;
+  string value = 2;
+}
+
+message AgentIntegrityReportV1 {
+  uint32 protocol_version = 1;
+  string agent_session_id = 2;
+  uint64 sequence = 3;
+  bytes challenge_nonce = 4;
+  int64 observed_at_unix = 5;
+  string build_id = 6;
+  bytes executable_sha256 = 7;
+  repeated IntegrityObservationV1 observations = 8;
+  bytes previous_report_digest = 9;
+  bytes signature = 10;
+}
+
+message AgentHealthV1 {
+  string agent_session_id = 1;
+  string state = 2;
+  int64 last_report_at_unix = 3;
+  repeated string public_reasons = 4;
+}
+
+message AgentRevocationV1 {
+  string agent_session_id = 1;
+  string reason = 2;
+  int64 revoked_at_unix = 3;
+}
