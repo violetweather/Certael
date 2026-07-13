@@ -133,11 +133,7 @@ jobs:
           git -C engines/godot/godot-cpp fetch --depth 1 origin "$GODOT_CPP_COMMIT"
           git -C engines/godot/godot-cpp checkout --detach "$GODOT_CPP_COMMIT"
           test "$(git -C engines/godot/godot-cpp rev-parse HEAD)" = "$GODOT_CPP_COMMIT"
-          python -m pip install scons==4.8.1
-          if [[ "${{ runner.os }}" == "Windows" ]]; then
-            import="target/${{ matrix.target }}/release/certael_c_api.lib"
-            test -f "$import" || cp "target/${{ matrix.target }}/release/certael_c_api.dll.lib" "$import"
-          fi
+          python -m pip install "scons==$SCONS_VERSION"
       - name: Build Godot adapter
         if: runner.os != 'Windows'
         shell: bash
@@ -184,6 +180,11 @@ jobs:
           try {
             python -m SCons platform=${{ matrix.platform }} arch=${{ matrix.arch }} `
               target=template_release use_mingw=no -j2
+            if ($LASTEXITCODE -ne 0) {
+              throw "SCons failed with exit code $LASTEXITCODE"
+            }
+            Copy-Item "$env:CERTAEL_NATIVE_DIR\certael_c_api.dll" `
+              "addons/certael/bin/certael_c_api.dll" -Force
           }
           finally {
             Pop-Location

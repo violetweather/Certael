@@ -56,6 +56,38 @@ jobs:
           fi
           /tmp/certael-cpp
 
+  godot-windows-msvc:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
+        with:
+          toolchain: 1.97.0
+          targets: x86_64-pc-windows-msvc
+      - name: Install pinned SCons
+        shell: pwsh
+        run: |
+          $line = Get-Content build/dependencies.env | Where-Object { $_ -like "SCONS_VERSION=*" }
+          if (-not $line) { throw "SCONS_VERSION is not pinned" }
+          $version = ($line -split "=", 2)[1]
+          python -m pip install "scons==$version"
+          $actual = (scons --version | Out-String)
+          if ($actual -notmatch [regex]::Escape($version)) {
+            throw "Expected SCons $version, got: $actual"
+          }
+      - name: Build Windows Godot extension with MSVC
+        shell: pwsh
+        run: .\scripts\build.ps1 godot -Configuration Release -Jobs 2
+      - name: Verify Windows package files
+        shell: pwsh
+        run: |
+          $extension = "engines/godot/addons/certael/bin/certael.windows.template_release.x86_64.dll"
+          $runtime = "engines/godot/addons/certael/bin/certael_c_api.dll"
+          if (-not (Test-Path $extension)) { throw "Missing Godot extension: $extension" }
+          if (-not (Test-Path $runtime)) { throw "Missing packaged Certael runtime: $runtime" }
+
   protocol-conformance:
     runs-on: ubuntu-24.04
     steps:
