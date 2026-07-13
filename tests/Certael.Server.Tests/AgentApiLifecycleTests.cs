@@ -24,6 +24,7 @@ public sealed class AgentApiLifecycleTests
             "tenant", "game", "prod", "player", "match", "server-a", "build",
             publicKey, policy, TimeSpan.FromHours(1)), TestContext.Current.CancellationToken);
         Assert.Equal(64, launch.Grant.Signature.Length);
+        Assert.NotEmpty(AgentApiCodec.EncodeLaunchChannelBundle(launch));
         Assert.Null(await lifecycle.ChallengeAsync("tenant", "prod", "server-b",
             launch.AgentSessionId, TestContext.Current.CancellationToken));
         AgentReportChallenge? challenge = await lifecycle.ChallengeAsync("tenant", "prod",

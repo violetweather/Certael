@@ -49,12 +49,20 @@ message AgentLaunchGrantClaimsV1 {
   int64 issued_at_unix = 10;
   int64 expires_at_unix = 11;
   bytes policy_digest = 12;
+  string authoritative_server_id = 13;
 }
 
 message SignedAgentLaunchGrantV1 {
   bytes claims = 1;
   bytes signature = 2;
   string key_id = 3;
+}
+
+// Exact payload sent over the inherited Agent channel after AgentHelloV1.
+// Both nested messages remain independently canonical and signed.
+message AgentLaunchBundleV1 {
+  bytes signed_policy = 1;
+  bytes signed_launch_grant = 2;
 }
 
 message AgentReportChallengeV1 {

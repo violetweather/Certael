@@ -62,6 +62,15 @@ public static class AgentApiCodec
         return Finish(stream);
     }
 
+    /// <summary>Canonical payload relayed over the inherited local Agent channel.</summary>
+    public static byte[] EncodeLaunchChannelBundle(AgentLaunchBundle value)
+    {
+        using var stream = New();
+        Bytes(stream, 1, AgentGrantCodec.EncodeSignedPolicy(value.Policy));
+        Bytes(stream, 2, AgentGrantCodec.EncodeSignedLaunchGrant(value.Grant));
+        return Finish(stream);
+    }
+
     public static AgentOperationRequest DecodeOperationRequest(ReadOnlySpan<byte> input)
     {
         var reader = new Reader(input);

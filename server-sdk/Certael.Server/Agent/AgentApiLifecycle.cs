@@ -39,7 +39,7 @@ public sealed class AgentApiLifecycle(
         var grantClaims = new AgentLaunchGrantClaims(1, sessionId, request.TenantId,
             request.GameId, request.EnvironmentId, request.PlayerSubject, request.MatchId,
             request.BuildId, request.AgentPublicKey.ToArray(), now, grantExpiresAt,
-            AgentGrantCodec.PolicyDigest(policy));
+            AgentGrantCodec.PolicyDigest(policy), request.AuthoritativeServerId);
         SignedAgentLaunchGrant grant = signer.IssueLaunchGrant(grantClaims, now);
         DateTimeOffset sessionExpiresAt = now.Add(request.SessionLifetime);
         await store.CreateAsync(new VerifiedAgentSession(sessionId, request.TenantId,

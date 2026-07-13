@@ -41,7 +41,7 @@ public sealed class AgentIntegrityTests
             { Signature = SignatureAlgorithm.Ed25519.Sign(key, message) };
         var session = new VerifiedAgentSession("agent-session", "tenant", "game", "prod",
             "player", "match", "build-1", publicKey, 3, previous,
-            now.AddMinutes(5));
+            now.AddMinutes(5), "server");
         var verifier = new AgentReportVerifier();
 
         Assert.Equal(AgentReportDecision.Accepted,
@@ -59,7 +59,7 @@ public sealed class AgentIntegrityTests
         var report = new AgentIntegrityReport(1, "agent", 2, new byte[32], now.ToUnixTimeSeconds(),
             "build", new byte[32], [], digest, new byte[64]);
         var session = new VerifiedAgentSession("agent", "tenant", "game", "prod", "player",
-            "match", "build", new byte[32], 2, digest, now.AddMinutes(1));
+            "match", "build", new byte[32], 2, digest, now.AddMinutes(1), "server");
         var verifier = new AgentReportVerifier();
         Assert.Equal(AgentReportDecision.Replay,
             verifier.Verify(report, session, new byte[32], now));
