@@ -62,6 +62,71 @@ cargo test --workspace
 The Compose profile uses development-only credentials and plain HTTP on the
 loopback interface. It is not a production configuration.
 
+## Godot: install in minutes
+
+Godot developers use a prebuilt package; Rust, SCons, `godot-cpp`, MSVC, and
+MinGW are not required.
+
+1. Download `certael-godot-4.7-vX.Y.Z.zip` and `checksums-sha256.txt` from the
+   same [Certael release](https://github.com/violetweather/Certael/releases).
+2. Verify the archive against the checksum, close Godot, and extract the zip
+   into the project root. You should now have `res://addons/certael/plugin.cfg`.
+3. Reopen Godot and enable **Certael** under **Project Settings → Plugins**. This
+   installs the `Certael` autoload.
+4. Initialize once and give the 32-byte session key to your authenticated game
+   server:
+
+```gdscript
+func _ready() -> void:
+    if not Certael.initialize():
+        push_error("Certael is missing for this platform")
+        return
+    game_network.request_certael_ticket(Certael.create_session_public_key())
+
+func on_ticket_challenge(ticket_id: PackedByteArray, challenge: PackedByteArray) -> void:
+    var proof := Certael.sign_redemption(ticket_id, challenge)
+    game_network.redeem_certael_ticket(ticket_id, challenge, proof)
+
+func on_verified_session(binding: Dictionary) -> void:
+    if not Certael.activate_session(binding):
+        push_error("Certael rejected the server binding")
+
+func request_craft(craft_request: PackedByteArray) -> void:
+    var envelope := Certael.authorize_action(
+        "inventory.craft", "mygame.Craft.v1", 1, craft_request)
+    game_network.send_authoritative_action(envelope)
+```
+
+`game_network` is your existing authenticated multiplayer transport. The server
+must redeem the session, validate the envelope against server-owned state, and
+commit the result; installing a client plugin alone cannot make gameplay
+authoritative. Follow the complete [Godot session walkthrough](docs/engine-support.md#godot-47).
+
+### Optional Certael Agent in Godot
+
+The same Godot zip includes the small platform probe. Install the separately
+released [Certael Agent](https://github.com/violetweather/Certael-Agent/releases)
+on the player's machine, install its public trust store
+outside the game directory, and have the Agent launch the exported game. Then:
+
+```gdscript
+if Certael.connect_agent():
+    game_network.begin_agent_session(Certael.agent_hello())
+
+func on_agent_launch(signed_policy: PackedByteArray, signed_grant: PackedByteArray) -> void:
+    if not Certael.bind_agent_launch(signed_policy, signed_grant):
+        push_error(Certael.agent_last_error())
+
+## Run this blocking call in WorkerThreadPool, then forward the bytes unchanged.
+func exchange_agent_challenge(challenge: PackedByteArray) -> PackedByteArray:
+    return Certael.exchange_agent_challenge(challenge)
+```
+
+The authoritative server—not GDScript—creates policies, launch grants, and
+challenges and verifies reports. Competitive modes can set
+`certael/agent/required` to `true`; offline play should leave it disabled. See
+[Agent trust and server flow](docs/agent.md) before enabling protected queues.
+
 ## Documentation
 
 - [Documentation home](docs/README.md)

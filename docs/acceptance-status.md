@@ -10,7 +10,7 @@ listed verification exists and passes in CI on every supported platform.
 | Request/validate/commit/record lifecycle | In progress | Transactional handler plus a local disposable PostgreSQL run proving game mutation, action result, and outbox event commit or roll back together | Passing protected CI and multi-replica crash/failover evidence |
 | Secure ticket lifecycle | In progress | 60-second canonical binary tickets, key proof, Redis single-use, absolute lifetime, individual/bulk revocation, overlapping signing-key ring and KMS/HSM provider interface | Production KMS adapter and rotation/revocation rehearsal |
 | Replay, reorder, duplicate, cross-binding rejection | In progress | Local proof substitution, cross-match/build/profile binding, concurrent duplicate, atomic Redis sequence+digest-chain+rate admission, and PostgreSQL rollback tests | Protected CI, failover, and multi-replica evidence |
-| Equivalent Godot, Unity, Unreal SDKs | In progress | Typed binary adapters, versioned C ABI, native verifier and packaging workflow | Pinned-engine Godot/Unreal/Unity IL2CPP builds and executable samples |
+| Equivalent Godot, Unity, Unreal SDKs | In progress | Typed binary adapters, versioned C ABI, native verifier, Godot/Unity Agent lifecycle relays, and packaging workflow | Pinned-engine Unreal/Unity IL2CPP builds and executable samples; cross-platform Agent relay E2E |
 | Declarative rules and trusted callbacks | Complete | Hardened structured-YAML parser, deterministic bounded AST evaluator, signed immutable packs, trusted callbacks, timeout/failure tests | — |
 | Explainable and replayable verdicts | Complete | Evidence bundles, deterministic replay digest, verdict recomputation, tenant-isolated store, tamper tests | — |
 | Integrity evidence cannot cause permanent ban | Complete | Verdict API has no permanent-ban outcome; tests cap client/environment signals to manual review regardless of aggregate risk | — |
@@ -19,7 +19,7 @@ listed verification exists and passes in CI on every supported platform.
 | Tenant isolation and authorization | In progress | Tenant-scoped store APIs, forced RLS for sessions/results/outbox/evidence/audit, and a local test with a `NOBYPASSRLS` role proving cross-tenant read/write denial | Protected CI, production-role review, and expanded administrative-table RLS |
 | 100,000 concurrent players | Not verified | Local protocol load harness exists | Distributed 100k-session/25k admission load, burst, failover, and 24-hour soak results |
 | Signed artifacts, SBOM, provenance | In progress | Pinned pre-release workflow for native/engine/NuGet/container packages, SBOM, checksums and attestations | Resolve Actions billing, verify a test release, platform signing/notarization and SLSA assessment |
-| Secure integration under 30 minutes | Not verified | Initial installation guide | Complete packages and timed external usability test |
+| Secure integration under 30 minutes | Not verified | Prebuilt-package guide plus README Godot session and optional Agent quickstart | Release-package usability run and timed external developer test |
 | No unresolved critical/high audit findings | Not verified | Threat model started | Independent security review after feature completion |
 
 The project must not mark 1.0 or the goal complete while any row is not complete.

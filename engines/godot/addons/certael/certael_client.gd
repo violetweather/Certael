@@ -2,6 +2,7 @@ extends Node
 
 signal session_ready(session_id: String)
 signal session_failed(public_reason: String)
+signal agent_health_changed(state: String, public_reason: String)
 
 var _native: Object
 
@@ -29,3 +30,56 @@ func activate_session(verified_binding: Dictionary) -> bool:
 func authorize_action(action_type: String, request_schema: String, schema_version: int, payload: PackedByteArray) -> PackedByteArray:
 	assert(_native != null, "Call initialize first")
 	return _native.authorize_action(action_type, request_schema, schema_version, payload)
+
+## Connects to the private channel inherited from Certael Agent and validates its
+## canonical hello. The game must have been started by the Agent.
+func connect_agent(probe_path: String = "") -> bool:
+	assert(_native != null, "Call initialize first")
+	var connected: bool = _native.agent_connect(probe_path)
+	agent_health_changed.emit(agent_state(), agent_last_error())
+	return connected
+
+## Returns protocol_version, agent_version, agent_public_key, build_id, and
+## executable_sha256. Returns an empty Dictionary while disconnected.
+func agent_hello() -> Dictionary:
+	assert(_native != null, "Call initialize first")
+	return _native.agent_get_hello()
+
+## Sends the exact signed policy and server-bound launch grant returned by the
+## authoritative server. Never construct or sign these in the game client.
+func bind_agent_launch(signed_policy: PackedByteArray, signed_grant: PackedByteArray) -> bool:
+	assert(_native != null, "Call initialize first")
+	var bound: bool = _native.agent_bind_launch_bundle(signed_policy, signed_grant)
+	agent_health_changed.emit(agent_state(), agent_last_error())
+	return bound
+
+## Sends one canonical server challenge and blocks until the Agent returns its
+## signed integrity report. Call from a WorkerThreadPool task, not the main thread.
+func exchange_agent_challenge(canonical_challenge: PackedByteArray) -> PackedByteArray:
+	assert(_native != null, "Call initialize first")
+	var report: PackedByteArray = _native.agent_exchange_challenge(canonical_challenge)
+	call_deferred("_emit_agent_health")
+	return report
+
+func _emit_agent_health() -> void:
+	agent_health_changed.emit(agent_state(), agent_last_error())
+
+## Requests an orderly Agent shutdown and closes the inherited channel.
+func shutdown_agent() -> void:
+	if _native == null:
+		return
+	_native.agent_shutdown()
+	agent_health_changed.emit(agent_state(), agent_last_error())
+
+## Closes only the game-side channel; it does not request Agent shutdown.
+func disconnect_agent() -> void:
+	if _native == null:
+		return
+	_native.agent_disconnect()
+	agent_health_changed.emit(agent_state(), agent_last_error())
+
+func agent_state() -> String:
+	return "disconnected" if _native == null else _native.agent_get_state()
+
+func agent_last_error() -> String:
+	return "AGENT_NOT_CONNECTED" if _native == null else _native.agent_get_last_error()
