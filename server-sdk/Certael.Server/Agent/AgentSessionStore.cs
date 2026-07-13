@@ -1,9 +1,20 @@
 namespace Certael.Server.Agent;
 
+public sealed record AgentSessionAdmission(
+    VerifiedAgentSession Session, byte[] Challenge, DateTimeOffset ChallengeExpiresAt);
+
+public sealed record AgentStoredHealth(
+    string AgentSessionId, string EnvironmentId, string AuthoritativeServerId,
+    DateTimeOffset ExpiresAt, DateTimeOffset? LastReportAt, DateTimeOffset? RevokedAt);
+
 public interface IAgentSessionStore
 {
     ValueTask CreateAsync(VerifiedAgentSession session, CancellationToken cancellationToken);
     ValueTask<VerifiedAgentSession?> FindAsync(string tenantId, string agentSessionId,
+        CancellationToken cancellationToken);
+    ValueTask<AgentSessionAdmission?> FindAdmissionAsync(string tenantId, string agentSessionId,
+        CancellationToken cancellationToken);
+    ValueTask<AgentStoredHealth?> HealthAsync(string tenantId, string agentSessionId,
         CancellationToken cancellationToken);
     ValueTask<bool> SetChallengeAsync(string tenantId, string agentSessionId,
         byte[] challenge, DateTimeOffset expiresAt, CancellationToken cancellationToken);

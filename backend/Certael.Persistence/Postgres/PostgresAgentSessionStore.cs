@@ -10,8 +10,8 @@ public sealed class PostgresAgentSessionStore(NpgsqlDataSource dataSource) : IAg
         const string sql = """
             INSERT INTO certael_agent_sessions(agent_session_id, tenant_id, game_id,
               environment_id, player_subject, match_id, build_id, agent_public_key,
-              last_sequence, last_report_digest, expires_at)
-            VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+              last_sequence, last_report_digest, expires_at, authoritative_server_id)
+            VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
             """;
         await using NpgsqlConnection connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using NpgsqlTransaction transaction = await connection.BeginTransactionAsync(cancellationToken);
@@ -28,6 +28,7 @@ public sealed class PostgresAgentSessionStore(NpgsqlDataSource dataSource) : IAg
         command.Parameters.AddWithValue((decimal)session.LastSequence);
         command.Parameters.AddWithValue(session.LastReportDigest);
         command.Parameters.AddWithValue(session.ExpiresAt);
+        command.Parameters.AddWithValue(session.AuthoritativeServerId);
         await command.ExecuteNonQueryAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
     }
@@ -37,7 +38,8 @@ public sealed class PostgresAgentSessionStore(NpgsqlDataSource dataSource) : IAg
     {
         const string sql = """
             SELECT agent_session_id, tenant_id, game_id, environment_id, player_subject,
-              match_id, build_id, agent_public_key, last_sequence, last_report_digest, expires_at
+              match_id, build_id, agent_public_key, last_sequence, last_report_digest, expires_at,
+              authoritative_server_id
             FROM certael_agent_sessions
             WHERE tenant_id=$1 AND agent_session_id=$2 AND revoked_at IS NULL
             """;
@@ -52,7 +54,62 @@ public sealed class PostgresAgentSessionStore(NpgsqlDataSource dataSource) : IAg
         var result = new VerifiedAgentSession(reader.GetString(0), reader.GetString(1),
             reader.GetString(2), reader.GetString(3), reader.GetString(4), reader.GetString(5),
             reader.GetString(6), reader.GetFieldValue<byte[]>(7), checked((ulong)reader.GetDecimal(8)),
-            reader.GetFieldValue<byte[]>(9), reader.GetFieldValue<DateTimeOffset>(10));
+            reader.GetFieldValue<byte[]>(9), reader.GetFieldValue<DateTimeOffset>(10), reader.GetString(11));
+        await reader.DisposeAsync();
+        await transaction.CommitAsync(cancellationToken);
+        return result;
+    }
+
+    public async ValueTask<AgentSessionAdmission?> FindAdmissionAsync(string tenantId,
+        string agentSessionId, CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT agent_session_id, tenant_id, game_id, environment_id, player_subject,
+              match_id, build_id, agent_public_key, last_sequence, last_report_digest, expires_at,
+              authoritative_server_id, challenge, challenge_expires_at
+            FROM certael_agent_sessions
+            WHERE tenant_id=$1 AND agent_session_id=$2 AND revoked_at IS NULL
+              AND challenge IS NOT NULL AND challenge_expires_at IS NOT NULL
+            """;
+        await using NpgsqlConnection connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        await using NpgsqlTransaction transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await SetTenant(connection, transaction, tenantId, cancellationToken);
+        await using var command = new NpgsqlCommand(sql, connection, transaction);
+        command.Parameters.AddWithValue(tenantId);
+        command.Parameters.AddWithValue(agentSessionId);
+        await using NpgsqlDataReader reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken)) return null;
+        var session = new VerifiedAgentSession(reader.GetString(0), reader.GetString(1),
+            reader.GetString(2), reader.GetString(3), reader.GetString(4), reader.GetString(5),
+            reader.GetString(6), reader.GetFieldValue<byte[]>(7), checked((ulong)reader.GetDecimal(8)),
+            reader.GetFieldValue<byte[]>(9), reader.GetFieldValue<DateTimeOffset>(10), reader.GetString(11));
+        var result = new AgentSessionAdmission(session, reader.GetFieldValue<byte[]>(12),
+            reader.GetFieldValue<DateTimeOffset>(13));
+        await reader.DisposeAsync();
+        await transaction.CommitAsync(cancellationToken);
+        return result;
+    }
+
+    public async ValueTask<AgentStoredHealth?> HealthAsync(string tenantId, string agentSessionId,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT agent_session_id, environment_id, authoritative_server_id, expires_at,
+              last_report_at, revoked_at
+            FROM certael_agent_sessions WHERE tenant_id=$1 AND agent_session_id=$2
+            """;
+        await using NpgsqlConnection connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        await using NpgsqlTransaction transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await SetTenant(connection, transaction, tenantId, cancellationToken);
+        await using var command = new NpgsqlCommand(sql, connection, transaction);
+        command.Parameters.AddWithValue(tenantId);
+        command.Parameters.AddWithValue(agentSessionId);
+        await using NpgsqlDataReader reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken)) return null;
+        var result = new AgentStoredHealth(reader.GetString(0), reader.GetString(1),
+            reader.GetString(2), reader.GetFieldValue<DateTimeOffset>(3),
+            reader.IsDBNull(4) ? null : reader.GetFieldValue<DateTimeOffset>(4),
+            reader.IsDBNull(5) ? null : reader.GetFieldValue<DateTimeOffset>(5));
         await reader.DisposeAsync();
         await transaction.CommitAsync(cancellationToken);
         return result;
