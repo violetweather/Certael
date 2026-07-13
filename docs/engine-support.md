@@ -114,6 +114,20 @@ public sealed class SecureGameSession : IDisposable
 `IGameNetwork` is illustrative. Keep the `CertaelClient` out of prefabs that can
 be duplicated and dispose it on logout or match transition.
 
+For protected modes launched by Certael Agent, create one
+`CertaelAgentConnection` on a worker thread. `ConnectToInheritedAgent()` reads
+and strictly validates the canonical hello. Send `GetAgentHello()` to trusted
+server bootstrap code; its build ID and copied ephemeral public key are inputs
+to the authenticated Agent launch API. Relay the returned signed components
+with `BindAgentLaunchBundle`, then call `ExchangeChallenge` for each canonical
+server challenge and forward the returned signed report unchanged. The exchange
+blocks, so it must not run on Unity's render thread. Call `ShutdownAgent` at
+logout, match exit, or server migration.
+
+The Unity adapter does not mint policies or grants and does not interpret a
+report as gameplay authorization. A channel error moves local health to `Lost`;
+the server applies the signed required/optional grace policy.
+
 ## Unreal Engine 5.8
 
 ### Install
