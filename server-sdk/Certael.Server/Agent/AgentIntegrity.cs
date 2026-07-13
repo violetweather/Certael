@@ -60,6 +60,11 @@ public sealed class AgentReportVerifier
             || expectedChallenge.Length is < 16 or > 256)
             return AgentReportDecision.Invalid;
         if (session.ExpiresAt <= now) return AgentReportDecision.Expired;
+        DateTimeOffset observedAt;
+        try { observedAt = DateTimeOffset.FromUnixTimeSeconds(report.ObservedAtUnix); }
+        catch (ArgumentOutOfRangeException) { return AgentReportDecision.Invalid; }
+        if (observedAt < now.AddMinutes(-5) || observedAt > now.AddSeconds(30))
+            return AgentReportDecision.Invalid;
         if (!string.Equals(report.AgentSessionId, session.AgentSessionId, StringComparison.Ordinal)
             || !string.Equals(report.BuildId, session.BuildId, StringComparison.Ordinal)
             || !CryptographicOperations.FixedTimeEquals(report.ChallengeNonce, expectedChallenge))

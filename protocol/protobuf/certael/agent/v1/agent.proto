@@ -28,6 +28,14 @@ message SignedAgentPolicyV1 {
   string key_id = 3;
 }
 
+message AgentHelloV1 {
+  uint32 protocol_version = 1;
+  string agent_version = 2;
+  bytes agent_public_key = 3;
+  string build_id = 4;
+  bytes executable_sha256 = 5;
+}
+
 message AgentLaunchGrantClaimsV1 {
   uint32 protocol_version = 1;
   string grant_id = 2;
