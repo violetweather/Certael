@@ -4,6 +4,7 @@ using Certael.Persistence.Redis;
 using Certael.Server.Actions;
 using Certael.Server.Evidence;
 using Certael.Server.Sessions;
+using Certael.Server.Agent;
 using Npgsql;
 using StackExchange.Redis;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -46,6 +47,26 @@ public sealed class PersistenceIntegrationTests
         Assert.True(await sessions.RenewAsync("tenant-a", "session-a", "server", renewedExpiry, token));
         Assert.Equal(renewedExpiry.ToUnixTimeSeconds(),
             (await sessions.FindAsync("tenant-a", "session-a", token))!.ExpiresAt.ToUnixTimeSeconds());
+
+        var agentStore = new PostgresAgentSessionStore(dataSource);
+        var agentSession = new VerifiedAgentSession("agent-a", "tenant-a", "game", "test",
+            "player", "match", "build", new byte[32], 0, new byte[32],
+            DateTimeOffset.UtcNow.AddMinutes(5));
+        await agentStore.CreateAsync(agentSession, token);
+        Assert.NotNull(await agentStore.FindAsync("tenant-a", "agent-a", token));
+        Assert.Null(await agentStore.FindAsync("tenant-b", "agent-a", token));
+        byte[] agentChallenge = RandomNumberGenerator.GetBytes(32);
+        Assert.True(await agentStore.SetChallengeAsync("tenant-a", "agent-a", agentChallenge,
+            DateTimeOffset.UtcNow.AddSeconds(30), token));
+        var agentReport = new AgentIntegrityReport(1, "agent-a", 1, agentChallenge,
+            DateTimeOffset.UtcNow.ToUnixTimeSeconds(), "build", new byte[32], [],
+            new byte[32], new byte[64]);
+        byte[] canonicalAgentReport = AgentReportCodec.Encode(agentReport);
+        byte[] agentDigest = AgentReportCodec.Digest(agentReport);
+        bool[] agentCommits = await Task.WhenAll(Enumerable.Range(0, 8).Select(_ =>
+            agentStore.CommitReportAsync("tenant-a", agentReport, canonicalAgentReport,
+                agentDigest, DateTimeOffset.UtcNow, token).AsTask()));
+        Assert.Equal(1, agentCommits.Count(value => value));
 
         await using NpgsqlConnection connection = await dataSource.OpenConnectionAsync(token);
         await using NpgsqlTransaction transaction = await connection.BeginTransactionAsync(token);
@@ -213,7 +234,8 @@ public sealed class PersistenceIntegrationTests
     private static async Task ResetPostgres(NpgsqlDataSource source, CancellationToken token)
     {
         await using NpgsqlCommand command = source.CreateCommand(
-            "TRUNCATE certael_action_results, certael_outbox, certael_evidence, certael_sessions CASCADE");
+            "TRUNCATE certael_agent_reports, certael_agent_sessions, certael_action_results, " +
+            "certael_outbox, certael_evidence, certael_sessions CASCADE");
         await command.ExecuteNonQueryAsync(token);
     }
 
@@ -227,6 +249,8 @@ public sealed class PersistenceIntegrationTests
             END $$;
             GRANT USAGE ON SCHEMA public TO certael_rls_test;
             GRANT SELECT, UPDATE ON certael_sessions TO certael_rls_test;
+            GRANT SELECT, UPDATE ON certael_agent_sessions TO certael_rls_test;
+            GRANT SELECT ON certael_agent_reports TO certael_rls_test;
             """))
             await setup.ExecuteNonQueryAsync(token);
 
@@ -238,6 +262,8 @@ public sealed class PersistenceIntegrationTests
             "SELECT set_config('certael.tenant_id','tenant-a',true)", connection, transaction))
             await tenant.ExecuteNonQueryAsync(token);
         await using (var read = new NpgsqlCommand("SELECT count(*) FROM certael_sessions", connection, transaction))
+            Assert.Equal(1L, (long)(await read.ExecuteScalarAsync(token))!);
+        await using (var read = new NpgsqlCommand("SELECT count(*) FROM certael_agent_sessions", connection, transaction))
             Assert.Equal(1L, (long)(await read.ExecuteScalarAsync(token))!);
         await using var crossWrite = new NpgsqlCommand(
             "UPDATE certael_sessions SET tenant_id='tenant-b' WHERE session_id='session-a'", connection, transaction);
