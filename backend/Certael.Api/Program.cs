@@ -19,6 +19,7 @@ using OpenTelemetry.Logs;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
+using NSec.Cryptography;
 
 WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 builder.Services.AddProblemDetails();
@@ -62,20 +63,29 @@ builder.Services.AddRateLimiter(options =>
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
     options.AddPolicy("session-redemption", http => RateLimitPartition.GetFixedWindowLimiter(
         http.Connection.RemoteIpAddress?.ToString() ?? "unknown",
-        _ => new FixedWindowRateLimiterOptions {
-            PermitLimit = 20, Window = TimeSpan.FromMinutes(1), QueueLimit = 0,
+        _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = 20,
+            Window = TimeSpan.FromMinutes(1),
+            QueueLimit = 0,
             AutoReplenishment = true
         }));
     options.AddPolicy("service-operations", http => RateLimitPartition.GetFixedWindowLimiter(
         $"{http.User.FindFirstValue("sub") ?? "anonymous"}|{http.User.FindFirstValue("tenant_id") ?? "unknown"}|{http.User.FindFirstValue("environment_id") ?? "unknown"}",
-        _ => new FixedWindowRateLimiterOptions {
-            PermitLimit = 600, Window = TimeSpan.FromMinutes(1), QueueLimit = 0,
+        _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = 600,
+            Window = TimeSpan.FromMinutes(1),
+            QueueLimit = 0,
             AutoReplenishment = true
         }));
     options.AddPolicy("administration", http => RateLimitPartition.GetFixedWindowLimiter(
         $"{http.User.FindFirstValue("sub") ?? "anonymous"}|{http.Connection.RemoteIpAddress}",
-        _ => new FixedWindowRateLimiterOptions {
-            PermitLimit = 60, Window = TimeSpan.FromMinutes(1), QueueLimit = 0,
+        _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = 60,
+            Window = TimeSpan.FromMinutes(1),
+            QueueLimit = 0,
             AutoReplenishment = true
         }));
 });
@@ -91,6 +101,9 @@ builder.Services.AddSingleton(sp => new BootstrapTicketSigner(
 builder.Services.AddSingleton(sp => new BootstrapTicketValidator(
     sp.GetRequiredService<BootstrapSigningKeyRing>(), ticketIssuer, ticketAudience,
     sp.GetRequiredService<ITicketRedemptionStore>(), sp.GetRequiredService<TimeProvider>()));
+builder.Services.AddSingleton(_ => LoadAgentGrantSigner(builder.Configuration, builder.Environment));
+builder.Services.AddSingleton<AgentReportVerifier>();
+builder.Services.AddSingleton<AgentApiLifecycle>();
 
 WebApplication app = builder.Build();
 app.UseExceptionHandler();
@@ -296,6 +309,124 @@ app.MapPost("/v1/sessions/tickets", (
     }
 }).RequireAuthorization().RequireRateLimiting("service-operations");
 
+app.MapPost("/v1/agent/sessions", async (HttpContext http, AgentApiLifecycle lifecycle,
+    TimeProvider clock, CancellationToken cancellationToken) =>
+{
+    try
+    {
+        AgentLaunchApiRequest request = AgentApiCodec.DecodeLaunchRequest(
+            await ReadAgentBody(http.Request, cancellationToken));
+        IResult? denied = AuthorizeAgent(http, "agents:launch", request.TenantId,
+            request.EnvironmentId, request.AuthoritativeServerId);
+        if (denied is not null) return denied;
+        DateTimeOffset now = clock.GetUtcNow();
+        var policy = new AgentPolicyClaims(1, request.PolicyId, request.GameId,
+            request.EnvironmentId, request.RequirementMode, request.HeartbeatSeconds,
+            request.ReportSeconds, request.DisconnectGraceSeconds, request.MinimumAgentVersion,
+            now.AddSeconds(request.PolicyLifetimeSeconds));
+        AgentLaunchBundle result = await lifecycle.LaunchAsync(new AgentLaunchParameters(
+            request.TenantId, request.GameId, request.EnvironmentId, request.PlayerSubject,
+            request.MatchId, request.AuthoritativeServerId, request.BuildId,
+            request.AgentPublicKey, policy, TimeSpan.FromSeconds(request.SessionLifetimeSeconds)),
+            cancellationToken);
+        return Results.Bytes(AgentApiCodec.EncodeLaunchResponse(result), AgentApiCodec.ContentType);
+    }
+    catch (Exception exception) when (exception is AgentApiException or ArgumentException
+        or OverflowException)
+    { return Results.BadRequest(); }
+}).RequireAuthorization().RequireRateLimiting("service-operations");
+
+app.MapPost("/v1/agent/sessions/{agentSessionId}/challenge", async (string agentSessionId,
+    HttpContext http, AgentApiLifecycle lifecycle, CancellationToken cancellationToken) =>
+{
+    try
+    {
+        AgentOperationRequest request = AgentApiCodec.DecodeOperationRequest(
+            await ReadAgentBody(http.Request, cancellationToken));
+        IResult? denied = AuthorizeAgent(http, "agents:challenge", request.TenantId,
+            request.EnvironmentId, request.AuthoritativeServerId);
+        if (denied is not null) return denied;
+        AgentReportChallenge? challenge = await lifecycle.ChallengeAsync(request.TenantId,
+            request.EnvironmentId, request.AuthoritativeServerId, agentSessionId,
+            cancellationToken);
+        return challenge is null ? Results.NotFound()
+            : Results.Bytes(AgentApiCodec.EncodeChallenge(challenge), AgentApiCodec.ContentType);
+    }
+    catch (AgentApiException) { return Results.BadRequest(); }
+}).RequireAuthorization().RequireRateLimiting("service-operations");
+
+app.MapPost("/v1/agent/sessions/{agentSessionId}/reports", async (string agentSessionId,
+    HttpContext http, AgentApiLifecycle lifecycle, CancellationToken cancellationToken) =>
+{
+    try
+    {
+        AgentReportSubmission request = AgentApiCodec.DecodeReportSubmission(
+            await ReadAgentBody(http.Request, cancellationToken));
+        IResult? denied = AuthorizeAgent(http, "agents:report", request.TenantId,
+            request.EnvironmentId, request.AuthoritativeServerId);
+        if (denied is not null) return denied;
+        if (!string.Equals(agentSessionId, request.Report.AgentSessionId, StringComparison.Ordinal))
+            return Results.NotFound();
+        AgentReportDecision decision = await lifecycle.SubmitAsync(request.TenantId,
+            request.EnvironmentId, request.AuthoritativeServerId, request.Report,
+            cancellationToken);
+        return decision switch
+        {
+            AgentReportDecision.Accepted => Results.NoContent(),
+            AgentReportDecision.BindingMismatch => Results.NotFound(),
+            AgentReportDecision.Replay or AgentReportDecision.BrokenChain => Results.Conflict(),
+            AgentReportDecision.Expired => Results.StatusCode(StatusCodes.Status410Gone),
+            _ => Results.BadRequest()
+        };
+    }
+    catch (Exception exception) when (exception is AgentApiException or AgentReportException
+        or ArgumentException or OverflowException)
+    { return Results.BadRequest(); }
+}).RequireAuthorization().RequireRateLimiting("service-operations");
+
+app.MapPost("/v1/agent/sessions/{agentSessionId}/health", async (string agentSessionId,
+    HttpContext http, AgentApiLifecycle lifecycle, CancellationToken cancellationToken) =>
+{
+    try
+    {
+        AgentOperationRequest request = AgentApiCodec.DecodeOperationRequest(
+            await ReadAgentBody(http.Request, cancellationToken));
+        IResult? denied = AuthorizeAgent(http, "agents:health", request.TenantId,
+            request.EnvironmentId, request.AuthoritativeServerId);
+        if (denied is not null) return denied;
+        AgentSessionHealth health = await lifecycle.HealthAsync(request.TenantId,
+            request.EnvironmentId, request.AuthoritativeServerId, agentSessionId,
+            TimeSpan.FromMinutes(2), cancellationToken);
+        return Results.Bytes(AgentApiCodec.EncodeHealth(health), AgentApiCodec.ContentType);
+    }
+    catch (AgentApiException) { return Results.BadRequest(); }
+}).RequireAuthorization().RequireRateLimiting("service-operations");
+
+app.MapPost("/v1/agent/sessions/{agentSessionId}/revoke", async (string agentSessionId,
+    HttpContext http, AgentApiLifecycle lifecycle, IAuditStore audit, TimeProvider clock,
+    CancellationToken cancellationToken) =>
+{
+    try
+    {
+        AgentRevocationRequest request = AgentApiCodec.DecodeRevocationRequest(
+            await ReadAgentBody(http.Request, cancellationToken));
+        IResult? denied = AuthorizeAgent(http, "agents:revoke", request.TenantId,
+            request.EnvironmentId, request.AuthoritativeServerId);
+        if (denied is not null) return denied;
+        if (!ValidReason(request.Reason)) return Results.BadRequest();
+        bool revoked = await lifecycle.RevokeAsync(request.TenantId, request.EnvironmentId,
+            request.AuthoritativeServerId, agentSessionId, request.Reason, cancellationToken);
+        string subject = http.User.FindFirstValue("sub") ?? "unknown";
+        DateTimeOffset now = clock.GetUtcNow();
+        await audit.AppendAsync(new AuditEvent(Guid.NewGuid(), request.TenantId,
+            request.EnvironmentId, subject, "agent.session.revoke", "agent-session",
+            agentSessionId, request.Reason, null, null, http.TraceIdentifier, now, revoked,
+            http.Connection.RemoteIpAddress?.ToString(), subject), cancellationToken);
+        return revoked ? Results.NoContent() : Results.NotFound();
+    }
+    catch (AgentApiException) { return Results.BadRequest(); }
+}).RequireAuthorization().RequireRateLimiting("service-operations");
+
 if (app.Services.GetService<NpgsqlDataSource>() is { } dataSource)
     await new PostgresMigrationRunner(dataSource).ApplyAsync();
 
@@ -358,6 +489,28 @@ static BootstrapSigningKeyRing LoadSigningKeyRing(
     ], keyId);
 }
 
+static AgentGrantSigner LoadAgentGrantSigner(IConfiguration configuration,
+    IHostEnvironment environment)
+{
+    string keyId = RequiredSetting(configuration, environment,
+        "Agent:SigningKeyId", "development-agent-key");
+    string? path = configuration["Agent:SigningPrivateKeyPath"];
+    if (string.IsNullOrWhiteSpace(path))
+    {
+        if (!environment.IsDevelopment())
+            throw new InvalidOperationException(
+                "Agent:SigningPrivateKeyPath is required outside Development.");
+        return new AgentGrantSigner(Key.Create(SignatureAlgorithm.Ed25519), keyId);
+    }
+    byte[] material = File.ReadAllBytes(path);
+    try
+    {
+        return new AgentGrantSigner(Key.Import(SignatureAlgorithm.Ed25519, material,
+            KeyBlobFormat.RawPrivateKey), keyId);
+    }
+    finally { CryptographicOperations.ZeroMemory(material); }
+}
+
 static string RequiredSetting(IConfiguration configuration, IHostEnvironment environment,
     string key, string developmentDefault) =>
     !string.IsNullOrWhiteSpace(configuration[key]) ? configuration[key]!
@@ -392,6 +545,32 @@ static void ConfigurePersistence(WebApplicationBuilder builder)
     builder.Services.AddSingleton<ISessionAuthorizationWriter>(service => service.GetRequiredService<InMemorySessionAuthorizationStore>());
     builder.Services.AddSingleton<ISessionAdministrationStore>(service => service.GetRequiredService<InMemorySessionAuthorizationStore>());
     builder.Services.AddSingleton<IAuditStore, InMemoryAuditStore>();
+    builder.Services.AddSingleton<IAgentSessionStore, InMemoryAgentSessionStore>();
+}
+
+static async ValueTask<byte[]> ReadAgentBody(HttpRequest request,
+    CancellationToken cancellationToken)
+{
+    if (request.ContentType is null || !request.ContentType.StartsWith(
+        AgentApiCodec.ContentType, StringComparison.OrdinalIgnoreCase)
+        || request.ContentLength > AgentApiCodec.MaximumBody)
+        throw new AgentApiException("Agent API content type or size is invalid.");
+    using var stream = new MemoryStream();
+    await request.Body.CopyToAsync(stream, cancellationToken);
+    if (stream.Length is < 1 or > AgentApiCodec.MaximumBody)
+        throw new AgentApiException("Agent API body is invalid.");
+    return stream.ToArray();
+}
+
+static IResult? AuthorizeAgent(HttpContext http, string scope, string tenantId,
+    string environmentId, string authoritativeServerId)
+{
+    ServiceIdentityDecision identity = ServiceIdentityGuard.Authorize(http.User,
+        http.Connection.ClientCertificate, scope, tenantId, environmentId);
+    if (identity == ServiceIdentityDecision.Unauthenticated) return Results.Unauthorized();
+    if (identity == ServiceIdentityDecision.Forbidden) return Results.Forbid();
+    return string.Equals(http.User.FindFirstValue("server_id"), authoritativeServerId,
+        StringComparison.Ordinal) ? null : Results.Forbid();
 }
 
 public sealed record IssueTicketRequest(

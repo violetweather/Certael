@@ -29,7 +29,8 @@ public sealed record VerifiedAgentSession(
     byte[] AgentPublicKey,
     ulong LastSequence,
     byte[] LastReportDigest,
-    DateTimeOffset ExpiresAt);
+    DateTimeOffset ExpiresAt,
+    string AuthoritativeServerId = "legacy");
 
 public enum AgentReportDecision
 {

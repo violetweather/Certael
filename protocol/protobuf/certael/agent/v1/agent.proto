@@ -93,3 +93,49 @@ message AgentRevocationV1 {
   string reason = 2;
   int64 revoked_at_unix = 3;
 }
+
+message AgentLaunchRequestV1 {
+  string tenant_id = 1;
+  string game_id = 2;
+  string environment_id = 3;
+  string player_subject = 4;
+  string match_id = 5;
+  string authoritative_server_id = 6;
+  string build_id = 7;
+  bytes agent_public_key = 8;
+  string policy_id = 9;
+  AgentRequirementModeV1 requirement_mode = 10;
+  uint32 heartbeat_seconds = 11;
+  uint32 report_seconds = 12;
+  uint32 disconnect_grace_seconds = 13;
+  string minimum_agent_version = 14;
+  uint32 policy_lifetime_seconds = 15;
+  uint32 session_lifetime_seconds = 16;
+}
+
+message AgentLaunchResponseV1 {
+  string agent_session_id = 1;
+  bytes signed_policy = 2;
+  bytes signed_launch_grant = 3;
+  int64 expires_at_unix = 4;
+}
+
+message AgentOperationRequestV1 {
+  string tenant_id = 1;
+  string environment_id = 2;
+  string authoritative_server_id = 3;
+}
+
+message AgentReportSubmissionV1 {
+  string tenant_id = 1;
+  string environment_id = 2;
+  string authoritative_server_id = 3;
+  bytes report = 4;
+}
+
+message AgentRevocationRequestV1 {
+  string tenant_id = 1;
+  string environment_id = 2;
+  string authoritative_server_id = 3;
+  string reason = 4;
+}
