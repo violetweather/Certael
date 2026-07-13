@@ -51,13 +51,22 @@ public sealed class PersistenceIntegrationTests
         var agentStore = new PostgresAgentSessionStore(dataSource);
         var agentSession = new VerifiedAgentSession("agent-a", "tenant-a", "game", "test",
             "player", "match", "build", new byte[32], 0, new byte[32],
-            DateTimeOffset.UtcNow.AddMinutes(5));
+            DateTimeOffset.UtcNow.AddMinutes(5), "server-a");
         await agentStore.CreateAsync(agentSession, token);
         Assert.NotNull(await agentStore.FindAsync("tenant-a", "agent-a", token));
         Assert.Null(await agentStore.FindAsync("tenant-b", "agent-a", token));
         byte[] agentChallenge = RandomNumberGenerator.GetBytes(32);
         Assert.True(await agentStore.SetChallengeAsync("tenant-a", "agent-a", agentChallenge,
             DateTimeOffset.UtcNow.AddSeconds(30), token));
+        AgentSessionAdmission? admission = await agentStore.FindAdmissionAsync(
+            "tenant-a", "agent-a", token);
+        Assert.NotNull(admission);
+        Assert.Equal("server-a", admission.Session.AuthoritativeServerId);
+        Assert.Equal(agentChallenge, admission.Challenge);
+        AgentStoredHealth? initialHealth = await agentStore.HealthAsync("tenant-a", "agent-a", token);
+        Assert.NotNull(initialHealth);
+        Assert.Equal("server-a", initialHealth.AuthoritativeServerId);
+        Assert.Null(initialHealth.LastReportAt);
         var agentReport = new AgentIntegrityReport(1, "agent-a", 1, agentChallenge,
             DateTimeOffset.UtcNow.ToUnixTimeSeconds(), "build", new byte[32], [],
             new byte[32], new byte[64]);
@@ -67,6 +76,8 @@ public sealed class PersistenceIntegrationTests
             agentStore.CommitReportAsync("tenant-a", agentReport, canonicalAgentReport,
                 agentDigest, DateTimeOffset.UtcNow, token).AsTask()));
         Assert.Equal(1, agentCommits.Count(value => value));
+        AgentStoredHealth? reportedHealth = await agentStore.HealthAsync("tenant-a", "agent-a", token);
+        Assert.NotNull(reportedHealth?.LastReportAt);
 
         await using NpgsqlConnection connection = await dataSource.OpenConnectionAsync(token);
         await using NpgsqlTransaction transaction = await connection.BeginTransactionAsync(token);

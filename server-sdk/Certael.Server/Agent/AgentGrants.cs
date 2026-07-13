@@ -17,7 +17,7 @@ public sealed record AgentLaunchGrantClaims(
     uint ProtocolVersion, string GrantId, string TenantId, string GameId,
     string EnvironmentId, string PlayerSubject, string MatchId, string BuildId,
     byte[] AgentPublicKey, DateTimeOffset IssuedAt, DateTimeOffset ExpiresAt,
-    byte[] PolicyDigest);
+    byte[] PolicyDigest, string AuthoritativeServerId);
 
 public sealed record SignedAgentLaunchGrant(byte[] Claims, byte[] Signature, string KeyId);
 
@@ -72,6 +72,7 @@ public sealed class AgentGrantSigner(Key signingKey, string keyId)
             || !Identifier(claims.TenantId) || !Identifier(claims.GameId)
             || !Identifier(claims.EnvironmentId) || !Identifier(claims.PlayerSubject)
             || !Identifier(claims.MatchId) || !Identifier(claims.BuildId)
+            || !Identifier(claims.AuthoritativeServerId)
             || claims.AgentPublicKey.Length != 32 || claims.PolicyDigest.Length != 32
             || claims.IssuedAt > now.AddSeconds(30) || claims.ExpiresAt <= claims.IssuedAt
             || claims.ExpiresAt - claims.IssuedAt > TimeSpan.FromMinutes(2)
@@ -121,6 +122,7 @@ public static class AgentGrantCodec
         VarintField(stream, 10, checked((ulong)value.IssuedAt.ToUnixTimeSeconds()));
         VarintField(stream, 11, checked((ulong)value.ExpiresAt.ToUnixTimeSeconds()));
         Bytes(stream, 12, value.PolicyDigest);
+        String(stream, 13, value.AuthoritativeServerId);
         return stream.ToArray();
     }
 

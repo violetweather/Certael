@@ -15,7 +15,7 @@ public sealed class AgentSessionLifecycleTests
         var service = new InMemoryAgentSessionLifecycle(new AgentReportVerifier(), clock);
         service.Register(new VerifiedAgentSession("agent", "tenant", "game", "prod", "player",
             "match", "build", key.PublicKey.Export(KeyBlobFormat.RawPublicKey), 0, new byte[32],
-            now.AddMinutes(5)));
+            now.AddMinutes(5), "server"));
         AgentReportChallenge challenge = service.IssueChallenge("agent");
         AgentIntegrityReport report = Sign(key, challenge.Nonce, 1, new byte[32], now);
 
@@ -37,7 +37,7 @@ public sealed class AgentSessionLifecycleTests
         var service = new InMemoryAgentSessionLifecycle(new AgentReportVerifier(), new FixedTimeProvider(now));
         service.Register(new VerifiedAgentSession("agent", "tenant", "game", "prod", "player",
             "match", "build", key.PublicKey.Export(KeyBlobFormat.RawPublicKey), 0, new byte[32],
-            now.AddMinutes(5)));
+            now.AddMinutes(5), "server"));
         AgentReportChallenge challenge = service.IssueChallenge("agent");
         AgentIntegrityReport report = Sign(key, challenge.Nonce, 1, new byte[32], now);
         AgentReportDecision[] decisions = Enumerable.Range(0, 16).AsParallel()
@@ -51,7 +51,7 @@ public sealed class AgentSessionLifecycleTests
         DateTimeOffset now = DateTimeOffset.UtcNow;
         var service = new InMemoryAgentSessionLifecycle(new AgentReportVerifier(), new FixedTimeProvider(now));
         service.Register(new VerifiedAgentSession("agent", "tenant", "game", "prod", "player",
-            "match", "build", new byte[32], 0, new byte[32], now.AddMinutes(5)));
+            "match", "build", new byte[32], 0, new byte[32], now.AddMinutes(5), "server"));
         Assert.True(service.Revoke("agent", "operator request", now));
         Assert.Equal("revoked", service.Health("agent", now).State);
         Assert.Throws<InvalidOperationException>(() => service.IssueChallenge("agent"));
