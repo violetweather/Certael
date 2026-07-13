@@ -15,6 +15,8 @@
     <None Include="../../rules/examples/inventory.yaml" Link="fixtures/inventory.yaml" CopyToOutputDirectory="PreserveNewest" />
     <Compile Include="../../engines/unity/Runtime/CertaelNative.cs" Link="EngineAdapters/Unity/CertaelNative.cs" />
     <Compile Include="../../engines/unity/Runtime/CertaelClient.cs" Link="EngineAdapters/Unity/CertaelClient.cs" />
+    <Compile Include="../../engines/unity/Runtime/CertaelAgentNative.cs" Link="EngineAdapters/Unity/CertaelAgentNative.cs" />
+    <Compile Include="../../engines/unity/Runtime/CertaelAgentConnection.cs" Link="EngineAdapters/Unity/CertaelAgentConnection.cs" />
     <None Include="../../target/release/libcertael_c_api.dylib" Link="libcertael_c_api.dylib"
           CopyToOutputDirectory="PreserveNewest" Condition="Exists('../../target/release/libcertael_c_api.dylib')" />
     <None Include="../../target/release/libcertael_c_api.so" Link="libcertael_c_api.so"
