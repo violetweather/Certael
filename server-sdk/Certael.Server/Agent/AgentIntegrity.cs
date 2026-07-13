@@ -105,6 +105,19 @@ public sealed class AgentReportVerifier
 
 public static class AgentReportCodec
 {
+    public const int MaximumReport = 64 * 1024;
+
+    public static byte[] Encode(AgentIntegrityReport report)
+    {
+        if (report.Signature.Length != 64)
+            throw new AgentReportException("Agent report signature must be 64 bytes.");
+        using var stream = new MemoryStream(256);
+        stream.Write(EncodeSigned(report));
+        Bytes(stream, 10, report.Signature);
+        if (stream.Length > MaximumReport) throw new AgentReportException("Agent report exceeds 64 KiB.");
+        return stream.ToArray();
+    }
+
     public static byte[] EncodeSigned(AgentIntegrityReport report)
     {
         using var stream = new MemoryStream(256);
@@ -123,17 +136,47 @@ public static class AgentReportCodec
             Bytes(stream, 8, nested.ToArray());
         }
         Bytes(stream, 9, report.PreviousReportDigest);
-        if (stream.Length > 64 * 1024) throw new ArgumentException("Agent report exceeds 64 KiB.");
+        if (stream.Length > MaximumReport) throw new AgentReportException("Agent report exceeds 64 KiB.");
         return stream.ToArray();
+    }
+
+    public static AgentIntegrityReport Decode(ReadOnlySpan<byte> input)
+    {
+        if (input.IsEmpty || input.Length > MaximumReport)
+            throw new AgentReportException("Agent report size is invalid.");
+        var decoder = new Decoder(input.ToArray());
+        uint protocol = decoder.UInt32(1);
+        string sessionId = decoder.String(2, 128);
+        ulong sequence = decoder.UInt64(3);
+        byte[] challenge = decoder.Bytes(4, 256, minimum: 16);
+        ulong rawObservedAt = decoder.UInt64(5);
+        if (rawObservedAt > long.MaxValue) throw new AgentReportException("Observed time overflows.");
+        string buildId = decoder.String(6, 128);
+        byte[] executable = decoder.Bytes(7, 32, exact: true);
+        var observations = new List<AgentObservation>();
+        while (decoder.NextFieldIs(8))
+        {
+            byte[] nested = decoder.Bytes(8, 1024);
+            var observation = new Decoder(nested);
+            string code = observation.String(1, 128);
+            string value = observation.String(2, 512);
+            observation.RequireEnd();
+            observations.Add(new AgentObservation(code, value));
+            if (observations.Count > 1024) throw new AgentReportException("Too many observations.");
+        }
+        byte[] previous = decoder.Bytes(9, 32, exact: true);
+        byte[] signature = decoder.Bytes(10, 64, exact: true);
+        decoder.RequireEnd();
+        var report = new AgentIntegrityReport(protocol, sessionId, sequence, challenge,
+            (long)rawObservedAt, buildId, executable, observations, previous, signature);
+        if (!CryptographicOperations.FixedTimeEquals(Encode(report), input))
+            throw new AgentReportException("Agent report is not canonical.");
+        return report;
     }
 
     public static byte[] Digest(AgentIntegrityReport report)
     {
-        using var stream = new MemoryStream(256);
-        byte[] signed = EncodeSigned(report);
-        stream.Write(signed);
-        Bytes(stream, 10, report.Signature);
-        return SHA256.HashData(stream.ToArray());
+        return SHA256.HashData(Encode(report));
     }
 
     private static void VarintField(Stream stream, uint field, ulong value)
@@ -147,4 +190,89 @@ public static class AgentReportCodec
         while (value >= 0x80) { stream.WriteByte((byte)(value | 0x80)); value >>= 7; }
         stream.WriteByte((byte)value);
     }
+
+    private sealed class Decoder(byte[] input)
+    {
+        private int _offset;
+        private uint _lastField;
+
+        internal bool NextFieldIs(uint field)
+        {
+            if (_offset >= input.Length) return false;
+            int saved = _offset;
+            ulong key = Varint();
+            _offset = saved;
+            return key >> 3 == field;
+        }
+
+        internal uint UInt32(uint field)
+        {
+            ulong value = UInt64(field);
+            return value <= uint.MaxValue ? (uint)value
+                : throw new AgentReportException("Integer overflows.");
+        }
+
+        internal ulong UInt64(uint field)
+        { Key(field, 0, allowRepeated: false); return Varint(); }
+
+        internal string String(uint field, int maximum)
+        {
+            byte[] bytes = Bytes(field, maximum);
+            try { return new UTF8Encoding(false, true).GetString(bytes); }
+            catch (DecoderFallbackException) { throw new AgentReportException("String is not valid UTF-8."); }
+        }
+
+        internal byte[] Bytes(uint field, int maximum, int minimum = 0, bool exact = false)
+        {
+            Key(field, 2, allowRepeated: field == 8);
+            ulong rawLength = Varint();
+            if (rawLength > int.MaxValue) throw new AgentReportException("Length overflows.");
+            int length = (int)rawLength;
+            if (length < minimum || length > maximum || (exact && length != maximum)
+                || _offset > input.Length - length)
+                throw new AgentReportException("Field length is invalid.");
+            byte[] result = input.AsSpan(_offset, length).ToArray();
+            _offset += length;
+            return result;
+        }
+
+        internal void RequireEnd()
+        { if (_offset != input.Length) throw new AgentReportException("Unknown or trailing fields are prohibited."); }
+
+        private void Key(uint expected, ulong wire, bool allowRepeated)
+        {
+            ulong key = Varint();
+            ulong rawField = key >> 3;
+            if (rawField > uint.MaxValue) throw new AgentReportException("Field number overflows.");
+            uint field = (uint)rawField;
+            bool orderValid = allowRepeated ? field >= _lastField : field > _lastField;
+            if (field != expected || !orderValid || (key & 7) != wire)
+                throw new AgentReportException("Fields must be canonical and ordered.");
+            _lastField = field;
+        }
+
+        private ulong Varint()
+        {
+            int start = _offset;
+            ulong value = 0;
+            for (int shift = 0; shift <= 63; shift += 7)
+            {
+                if (_offset >= input.Length) throw new AgentReportException("Truncated varint.");
+                byte current = input[_offset++];
+                if (shift == 63 && current > 1) throw new AgentReportException("Varint overflows.");
+                value |= (ulong)(current & 0x7f) << shift;
+                if ((current & 0x80) == 0)
+                {
+                    using var canonical = new MemoryStream();
+                    AgentReportCodec.Varint(canonical, value);
+                    if (!canonical.ToArray().AsSpan().SequenceEqual(input.AsSpan(start, _offset - start)))
+                        throw new AgentReportException("Varint is not minimally encoded.");
+                    return value;
+                }
+            }
+            throw new AgentReportException("Varint overflows.");
+        }
+    }
 }
+
+public sealed class AgentReportException(string message) : Exception(message);

@@ -6,6 +6,24 @@ namespace Certael.Server.Tests;
 public sealed class AgentIntegrityTests
 {
     [Fact]
+    public void BinaryReportRoundTripsAndRejectsNonCanonicalInput()
+    {
+        var report = new AgentIntegrityReport(1, "agent", 1, new byte[32],
+            DateTimeOffset.UtcNow.ToUnixTimeSeconds(), "build", new byte[32],
+            [new AgentObservation("platform", "linux"), new AgentObservation("probe", "healthy")],
+            new byte[32], new byte[64]);
+        byte[] encoded = AgentReportCodec.Encode(report);
+        AgentIntegrityReport decoded = AgentReportCodec.Decode(encoded);
+        Assert.Equal(encoded, AgentReportCodec.Encode(decoded));
+        Assert.Equal(2, decoded.Observations.Count);
+        Assert.Throws<AgentReportException>(() => AgentReportCodec.Decode(
+            encoded.Concat(new byte[] { 0 }).ToArray()));
+        byte[] nonMinimal = encoded.ToArray();
+        Assert.NotEmpty(nonMinimal);
+        Assert.Throws<AgentReportException>(() => AgentReportCodec.Decode([0x08, 0x81, 0x00]));
+    }
+
+    [Fact]
     public void AcceptsValidReportAndRejectsTampering()
     {
         DateTimeOffset now = DateTimeOffset.UtcNow;
