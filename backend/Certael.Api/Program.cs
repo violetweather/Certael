@@ -13,6 +13,7 @@ using StackExchange.Redis;
 using Certael.Api.Security;
 using Certael.Server.Audit;
 using Certael.Server.Diagnostics;
+using Certael.Server.Agent;
 using System.Text;
 using OpenTelemetry.Logs;
 using OpenTelemetry.Metrics;
@@ -380,6 +381,7 @@ static void ConfigurePersistence(WebApplicationBuilder builder)
         builder.Services.AddSingleton<ISessionAuthorizationWriter>(service => service.GetRequiredService<PostgresSessionStore>());
         builder.Services.AddSingleton<ISessionAdministrationStore>(service => service.GetRequiredService<PostgresSessionStore>());
         builder.Services.AddSingleton<IAuditStore, PostgresAuditStore>();
+        builder.Services.AddSingleton<IAgentSessionStore, PostgresAgentSessionStore>();
         return;
     }
     if (!builder.Environment.IsDevelopment())
