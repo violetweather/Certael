@@ -12,12 +12,35 @@ public sealed class CertaelAgentHealth
     { State = state; PublicReason = publicReason; }
 }
 
+public sealed class CertaelAgentHello
+{
+    public uint ProtocolVersion { get; }
+    public string AgentVersion { get; }
+    public byte[] AgentPublicKey { get; }
+    public string BuildId { get; }
+    public byte[] ExecutableSha256 { get; }
+
+    internal CertaelAgentHello(uint protocolVersion, string agentVersion, byte[] agentPublicKey,
+        string buildId, byte[] executableSha256)
+    {
+        ProtocolVersion = protocolVersion;
+        AgentVersion = agentVersion;
+        AgentPublicKey = agentPublicKey;
+        BuildId = buildId;
+        ExecutableSha256 = executableSha256;
+    }
+
+    internal CertaelAgentHello Copy() => new(ProtocolVersion, AgentVersion,
+        AgentPublicKey.ToArray(), BuildId, ExecutableSha256.ToArray());
+}
+
 /// <summary>Private inherited connection to the optional Certael Agent.</summary>
 public sealed class CertaelAgentConnection : IDisposable
 {
-    private const byte AgentHello = 1, LaunchGrant = 2;
+    private const byte AgentHelloMessage = 1, LaunchGrant = 2, Challenge = 3,
+        IntegrityReport = 4, Shutdown = 6;
     private IntPtr _channel;
-    private byte[] _agentPublicKey = Array.Empty<byte>();
+    private CertaelAgentHello? _hello;
     private CertaelAgentHealth _health = new(CertaelAgentState.Disconnected, "AGENT_NOT_CONNECTED");
 
     public void ConnectToInheritedAgent()
@@ -27,8 +50,9 @@ public sealed class CertaelAgentConnection : IDisposable
         try
         {
             (byte type, byte[] hello) = ReadMessage();
-            if (type != AgentHello) throw new InvalidOperationException("Agent did not send a canonical hello.");
-            _agentPublicKey = AgentHelloCodec.ReadPublicKey(hello);
+            if (type != AgentHelloMessage)
+                throw new InvalidOperationException("Agent did not send a canonical hello.");
+            _hello = AgentHelloCodec.Decode(hello);
             _health = new(CertaelAgentState.Ready, "AGENT_READY");
         }
         catch
@@ -40,9 +64,11 @@ public sealed class CertaelAgentConnection : IDisposable
 
     public byte[] GetAgentSessionPublicKey()
     {
-        if (_agentPublicKey.Length != 32) throw new InvalidOperationException("Agent is not connected.");
-        return _agentPublicKey.ToArray();
+        return GetAgentHello().AgentPublicKey;
     }
+
+    public CertaelAgentHello GetAgentHello() => _hello?.Copy()
+        ?? throw new InvalidOperationException("Agent is not connected.");
 
     public void BindAgentLaunchBundle(byte[] signedPolicy, byte[] signedGrant)
     {
@@ -51,9 +77,54 @@ public sealed class CertaelAgentConnection : IDisposable
         if (_channel == IntPtr.Zero)
             throw new InvalidOperationException("Agent connection or launch grant is invalid.");
         byte[] grantBytes = AgentLaunchBundleCodec.Encode(signedPolicy, signedGrant);
-        Throw(CertaelAgentNative.certael_agent_channel_write(_channel, LaunchGrant,
-            grantBytes, (nuint)grantBytes.Length));
-        Array.Clear(grantBytes, 0, grantBytes.Length);
+        try
+        {
+            Throw(CertaelAgentNative.certael_agent_channel_write(_channel, LaunchGrant,
+                grantBytes, (nuint)grantBytes.Length));
+        }
+        catch
+        {
+            _health = new(CertaelAgentState.Lost, "AGENT_CHANNEL_LOST");
+            throw;
+        }
+        finally { Array.Clear(grantBytes, 0, grantBytes.Length); }
+    }
+
+    /// <summary>
+    /// Sends one canonical server challenge and blocks until the Agent returns
+    /// one complete signed report. Call this from a worker, not Unity's render thread.
+    /// </summary>
+    public byte[] ExchangeChallenge(byte[] canonicalChallenge)
+    {
+        ArgumentNullException.ThrowIfNull(canonicalChallenge);
+        if (_channel == IntPtr.Zero || canonicalChallenge.Length is < 1 or > 64 * 1024)
+            throw new InvalidOperationException("Agent connection or challenge is invalid.");
+        try
+        {
+            Throw(CertaelAgentNative.certael_agent_channel_write(_channel, Challenge,
+                canonicalChallenge, (nuint)canonicalChallenge.Length));
+            (byte type, byte[] report) = ReadMessage();
+            if (type != IntegrityReport)
+                throw new InvalidOperationException("Agent returned an unexpected message.");
+            _health = new(CertaelAgentState.Ready, "AGENT_READY");
+            return report;
+        }
+        catch
+        {
+            _health = new(CertaelAgentState.Lost, "AGENT_CHANNEL_LOST");
+            throw;
+        }
+    }
+
+    public void ShutdownAgent()
+    {
+        if (_channel == IntPtr.Zero) return;
+        try
+        {
+            Throw(CertaelAgentNative.certael_agent_channel_write(_channel, Shutdown,
+                Array.Empty<byte>(), 0));
+        }
+        finally { Dispose(); }
     }
 
     public CertaelAgentHealth GetAgentHealth() => _health;
@@ -87,8 +158,12 @@ public sealed class CertaelAgentConnection : IDisposable
             CertaelAgentNative.certael_agent_channel_destroy(_channel);
             _channel = IntPtr.Zero;
         }
-        Array.Clear(_agentPublicKey, 0, _agentPublicKey.Length);
-        _agentPublicKey = Array.Empty<byte>();
+        if (_hello is not null)
+        {
+            Array.Clear(_hello.AgentPublicKey, 0, _hello.AgentPublicKey.Length);
+            Array.Clear(_hello.ExecutableSha256, 0, _hello.ExecutableSha256.Length);
+            _hello = null;
+        }
         _health = new(CertaelAgentState.Disconnected, "AGENT_NOT_CONNECTED");
         GC.SuppressFinalize(this);
     }
@@ -119,22 +194,44 @@ internal static class AgentLaunchBundleCodec
 
 internal static class AgentHelloCodec
 {
-    internal static byte[] ReadPublicKey(ReadOnlySpan<byte> input)
+    internal static CertaelAgentHello Decode(ReadOnlySpan<byte> input)
     {
         int offset = 0;
         RequireVarintField(input, ref offset, 1);
-        _ = ReadVarint(input, ref offset);
-        SkipBytesField(input, ref offset, 2, 64);
+        ulong protocol = ReadVarint(input, ref offset);
+        byte[] agentVersion = ReadBytesField(input, ref offset, 2, 64);
         byte[] key = ReadBytesField(input, ref offset, 3, 32);
-        SkipBytesField(input, ref offset, 4, 128);
-        _ = ReadBytesField(input, ref offset, 5, 32);
-        if (offset != input.Length || key.Length != 32)
+        byte[] buildId = ReadBytesField(input, ref offset, 4, 128);
+        byte[] executable = ReadBytesField(input, ref offset, 5, 32);
+        if (offset != input.Length || protocol != 1 || key.Length != 32 || executable.Length != 32)
             throw new InvalidOperationException("Agent hello is not canonical.");
-        return key;
+        string version = StrictUtf8(agentVersion);
+        string build = StrictUtf8(buildId);
+        if (!SafeIdentifier(version, 64) || !SafeIdentifier(build, 128))
+            throw new InvalidOperationException("Agent hello identifier is invalid.");
+        return new CertaelAgentHello(1, version, key, build, executable);
     }
 
-    private static void SkipBytesField(ReadOnlySpan<byte> input, ref int offset, uint field, int maximum) =>
-        _ = ReadBytesField(input, ref offset, field, maximum);
+    internal static byte[] ReadPublicKey(ReadOnlySpan<byte> input) => Decode(input).AgentPublicKey;
+
+    private static string StrictUtf8(byte[] value)
+    {
+        try { return new System.Text.UTF8Encoding(false, true).GetString(value); }
+        catch (System.Text.DecoderFallbackException)
+        { throw new InvalidOperationException("Agent hello string is not UTF-8."); }
+    }
+
+    private static bool SafeIdentifier(string value, int maximum)
+    {
+        if (value.Length is 0 || value.Length > maximum) return false;
+        foreach (char character in value)
+            if (!((character >= 'a' && character <= 'z')
+                || (character >= 'A' && character <= 'Z')
+                || (character >= '0' && character <= '9')
+                || character is '.' or '_' or '-' or '+'))
+                return false;
+        return true;
+    }
 
     private static byte[] ReadBytesField(ReadOnlySpan<byte> input, ref int offset, uint field, int maximum)
     {

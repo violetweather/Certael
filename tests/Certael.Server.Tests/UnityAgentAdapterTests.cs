@@ -15,7 +15,12 @@ public sealed class UnityAgentAdapterTests
         Bytes(stream, 4, "build"u8);
         Bytes(stream, 5, new byte[32]);
         byte[] hello = stream.ToArray();
-        Assert.Equal(publicKey, AgentHelloCodec.ReadPublicKey(hello));
+        CertaelAgentHello decoded = AgentHelloCodec.Decode(hello);
+        Assert.Equal((uint)1, decoded.ProtocolVersion);
+        Assert.Equal("0.1.0", decoded.AgentVersion);
+        Assert.Equal("build", decoded.BuildId);
+        Assert.Equal(publicKey, decoded.AgentPublicKey);
+        Assert.Equal(new byte[32], decoded.ExecutableSha256);
         Assert.Throws<InvalidOperationException>(() =>
             AgentHelloCodec.ReadPublicKey(hello.Concat(new byte[] { 0 }).ToArray()));
     }
