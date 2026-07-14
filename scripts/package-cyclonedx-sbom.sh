@@ -22,7 +22,8 @@ while IFS= read -r -d '' sbom; do
 done < "$list"
 mkdir -p "$(dirname "$output")"
 tar -C "$staging" -czf "$output" .
-if [[ $(wc -c < "$output") -le 100 ]] || ! tar -tzf "$output" | grep -q '\.cdx\.json$'; then
+archive_entries=$(tar -tzf "$output")
+if [[ $(wc -c < "$output") -le 100 ]] || ! grep -q '\.cdx\.json$' <<<"$archive_entries"; then
   echo "generated CycloneDX archive is empty or invalid" >&2
   exit 1
 fi

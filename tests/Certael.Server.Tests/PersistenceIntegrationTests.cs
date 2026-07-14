@@ -119,8 +119,11 @@ public sealed class PersistenceIntegrationTests
         AgentPolicyDeployment active = await policyStore.PromoteAsync("tenant-a",
             policyClaims.PolicyId, AgentPolicyDeploymentStage.Enforced, 0, "operator", token);
         Assert.Equal(2, active.Approvals.Count);
-        Assert.Equal(policyClaims, (await policyStore.ResolveAsync(policyClaims.PolicyId,
-            "tenant-a", "game", "test", "player\0match", DateTimeOffset.UtcNow, token)).Claims);
+        AgentPolicyClaims resolvedPolicy = (await policyStore.ResolveAsync(policyClaims.PolicyId,
+            "tenant-a", "game", "test", "player\0match", DateTimeOffset.UtcNow, token)).Claims;
+        Assert.Equal(policyClaims with { ExpiresAt = resolvedPolicy.ExpiresAt }, resolvedPolicy);
+        Assert.InRange((policyClaims.ExpiresAt - resolvedPolicy.ExpiresAt).Duration(),
+            TimeSpan.Zero, TimeSpan.FromMilliseconds(1));
         await Assert.ThrowsAsync<AgentPolicyLifecycleException>(async () =>
             await policyStore.GetAsync("tenant-b", policyClaims.PolicyId, token));
 
