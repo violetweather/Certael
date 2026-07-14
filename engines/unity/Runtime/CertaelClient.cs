@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -29,7 +30,9 @@ public sealed class CertaelClient : IDisposable
 
     public byte[] SignRedemption(Guid ticketId, byte[] challenge)
     {
-        ArgumentNullException.ThrowIfNull(challenge);
+        if (challenge is null) throw new ArgumentNullException(nameof(challenge));
+        if (challenge.Length is < 16 or > 256)
+            throw new ArgumentException("Redemption challenge must be between 16 and 256 bytes.", nameof(challenge));
         byte[] signature = new byte[64];
         ThrowIfFailed(CertaelNative.certael_client_sign_redemption(_client,
             UuidNetworkBytes(ticketId), 16, challenge, (nuint)challenge.Length, signature, 64));
@@ -38,7 +41,7 @@ public sealed class CertaelClient : IDisposable
 
     public void ActivateSession(CertaelSessionBinding binding)
     {
-        ArgumentNullException.ThrowIfNull(binding);
+        if (binding is null) throw new ArgumentNullException(nameof(binding));
         if (binding.BindingDigest.Length != 32) throw new ArgumentException("Binding digest must be 32 bytes.");
         using var memory = new NativeMemory();
         var native = new CertaelNative.SessionBinding
@@ -56,19 +59,46 @@ public sealed class CertaelClient : IDisposable
     public byte[] AuthorizeAction(string actionType, string requestSchema,
         uint schemaVersion, byte[] requestPayload)
     {
-        ArgumentNullException.ThrowIfNull(requestPayload);
+        if (requestPayload is null) throw new ArgumentNullException(nameof(requestPayload));
+        if (!ValidIdentifier(actionType))
+            throw new ArgumentException("Action type must be a 1-128 byte ASCII identifier.", nameof(actionType));
+        if (!ValidIdentifier(requestSchema))
+            throw new ArgumentException("Request schema must be a 1-128 byte ASCII identifier.", nameof(requestSchema));
+        if (schemaVersion == 0)
+            throw new ArgumentOutOfRangeException(nameof(schemaVersion), "Schema version must be positive.");
+        if (requestPayload.Length > 64 * 1024)
+            throw new ArgumentException("Action payload cannot exceed 64 KiB.", nameof(requestPayload));
         using var memory = new NativeMemory();
         var request = new CertaelNative.ActionRequest
         {
             StructSize = (nuint)Marshal.SizeOf<CertaelNative.ActionRequest>(), AbiVersion = CertaelNative.AbiVersion,
             ActionType = memory.String(actionType), RequestSchema = memory.String(requestSchema),
             SchemaVersion = schemaVersion, NowUnix = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-            ClientMonotonicMicros = Environment.TickCount64 * 1000, Payload = memory.Bytes(requestPayload)
+            ClientMonotonicMicros = MonotonicMicroseconds(), Payload = memory.Bytes(requestPayload)
         };
         byte[] output = new byte[requestPayload.Length + 2048];
         ThrowIfFailed(CertaelNative.certael_client_authorize_action_v1(
             _client, ref request, output, (nuint)output.Length, out nuint written));
         Array.Resize(ref output, checked((int)written)); return output;
+    }
+
+    private static bool ValidIdentifier(string? value)
+    {
+        if (string.IsNullOrEmpty(value) || value.Length > 128) return false;
+        foreach (char character in value)
+        {
+            if (character > 0x7f || !(char.IsLetterOrDigit(character)
+                || character is '.' or '_' or '-')) return false;
+        }
+        return Encoding.UTF8.GetByteCount(value) <= 128;
+    }
+
+    private static long MonotonicMicroseconds()
+    {
+        long ticks = Stopwatch.GetTimestamp();
+        long frequency = Stopwatch.Frequency;
+        return checked((ticks / frequency) * 1_000_000
+            + (ticks % frequency) * 1_000_000 / frequency);
     }
 
     private static byte[] UuidNetworkBytes(Guid value)

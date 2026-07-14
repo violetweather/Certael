@@ -34,6 +34,42 @@ Fail closed, stop protected matchmaking or rebootstrap sessions into a clean
 namespace, do not reconstruct accepted state from client reports, and reconcile
 valuable outcomes from PostgreSQL.
 
+## PostgreSQL corruption or failover anomaly
+
+Fail protected writes closed, retain the affected primary and write-ahead logs,
+promote only a consistency-checked replica, compare action-result/outbox/game
+transaction invariants, and never replay a client request under a new action ID.
+Restore into an isolated environment first and reconcile by immutable action ID
+before reopening protected matchmaking.
+
+## Evidence pipeline outage
+
+Keep authoritative action decisions independent of asynchronous evidence
+delivery, apply backpressure before queues become unbounded, retain the durable
+outbox, and disable advisory enforcement recommendations while evidence is
+incomplete. Reprocess idempotently and record the observation gap.
+
+## Stolen game-server identity
+
+Revoke the workload certificate and token subject, bulk-revoke sessions bound
+to the server ID, block ticket issuance, preserve certificate/token/audit
+records, rotate the workload identity, and verify that tenant/environment and
+certificate-binding checks reject the stolen credential before recovery.
+
+## Vulnerable engine adapter or dependency
+
+Stop distributing affected packages, identify exact source and artifact
+digests, publish supported mitigations, patch and run the full engine/protocol
+conformance suite, issue new signed artifacts and SBOMs, and revoke affected
+build manifests when exploitation could alter trusted admission behavior.
+
+## Regional failure
+
+Stop new protected admissions in the failed region, use newly bound sessions
+for migration rather than editing existing bindings, verify replay stores and
+database recovery points in the destination, and reconcile match outcomes by
+action ID before resuming rewards.
+
 ## Excessive false positives
 
 Move the responsible rule to shadow or roll back, stop automated session

@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnableDefaultItems>false</EnableDefaultItems>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="CertaelNative.cs" />
+    <Compile Include="CertaelAgentNative.cs" />
+    <Compile Include="CertaelClient.cs" />
+    <Compile Include="CertaelAgentConnection.cs" />
+  </ItemGroup>
+</Project>

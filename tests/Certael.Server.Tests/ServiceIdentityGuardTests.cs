@@ -12,19 +12,21 @@ public sealed class ServiceIdentityGuardTests
     {
         using X509Certificate2 certificate = Certificate();
         ClaimsPrincipal allowed = Principal("tenant", "prod", "sessions:issue builds:read", certificate);
-        Assert.Equal(ServiceIdentityDecision.Allowed,
+        Assert.Equal(ServiceIdentityDecision.Unauthenticated,
             ServiceIdentityGuard.Authorize(allowed, certificate, "sessions:issue", "tenant", "prod"));
+        Assert.Equal(ServiceIdentityDecision.Allowed,
+            ServiceIdentityGuard.Authorize(allowed, certificate, "sessions:issue", "tenant", "prod", _ => true));
         Assert.Equal(ServiceIdentityDecision.Unauthenticated,
             ServiceIdentityGuard.Authorize(allowed, null, "sessions:issue", "tenant", "prod"));
         Assert.Equal(ServiceIdentityDecision.Forbidden,
             ServiceIdentityGuard.Authorize(Principal("other", "prod", "sessions:issue", certificate), certificate,
-                "sessions:issue", "tenant", "prod"));
+                "sessions:issue", "tenant", "prod", _ => true));
         Assert.Equal(ServiceIdentityDecision.Forbidden,
             ServiceIdentityGuard.Authorize(Principal("tenant", "prod", "builds:read", certificate), certificate,
-                "sessions:issue", "tenant", "prod"));
+                "sessions:issue", "tenant", "prod", _ => true));
         using X509Certificate2 otherCertificate = Certificate();
         Assert.Equal(ServiceIdentityDecision.Forbidden,
-            ServiceIdentityGuard.Authorize(allowed, otherCertificate, "sessions:issue", "tenant", "prod"));
+            ServiceIdentityGuard.Authorize(allowed, otherCertificate, "sessions:issue", "tenant", "prod", _ => true));
     }
 
     private static ClaimsPrincipal Principal(string tenant, string environment, string scopes,

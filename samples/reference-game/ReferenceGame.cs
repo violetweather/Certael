@@ -8,7 +8,29 @@ public sealed record ReferenceGameState(
     ulong Revision,
     DateTimeOffset AbilityReadyAt,
     IReadOnlySet<string> VisibleEntities,
-    IReadOnlySet<string> ClaimedRewards);
+    IReadOnlySet<string> ClaimedRewards,
+    ReferenceVector Position = default,
+    ReferenceVector Velocity = default);
+
+public readonly record struct ReferenceVector(double X, double Y)
+{
+    public bool Finite => double.IsFinite(X) && double.IsFinite(Y);
+    public double Length => Math.Sqrt(X * X + Y * Y);
+    public static ReferenceVector operator +(ReferenceVector left, ReferenceVector right) =>
+        new(left.X + right.X, left.Y + right.Y);
+    public static ReferenceVector operator *(ReferenceVector value, double scale) =>
+        new(value.X * scale, value.Y * scale);
+}
+
+public readonly record struct ReferenceObstacle(double MinimumX, double MinimumY,
+    double MaximumX, double MaximumY)
+{
+    public bool Valid => double.IsFinite(MinimumX) && double.IsFinite(MinimumY)
+        && double.IsFinite(MaximumX) && double.IsFinite(MaximumY)
+        && MinimumX <= MaximumX && MinimumY <= MaximumY;
+    public bool Contains(ReferenceVector point) => point.X >= MinimumX && point.X <= MaximumX
+        && point.Y >= MinimumY && point.Y <= MaximumY;
+}
 
 public sealed record ReferenceDecision(bool Allowed, string PublicReason, ReferenceGameState State)
 {
@@ -19,6 +41,48 @@ public sealed record ReferenceDecision(bool Allowed, string PublicReason, Refere
 /// <summary>Small authoritative domain used identically by all engine samples.</summary>
 public sealed class ReferenceGameRules
 {
+    /// <summary>
+    /// Applies player input to trusted server state. A client never supplies its
+    /// final position, velocity, collision result, or elapsed server tick.
+    /// </summary>
+    public ReferenceDecision Move(ReferenceGameState state, ReferenceVector input,
+        TimeSpan serverDelta, double maximumSpeed, double acceleration,
+        IReadOnlyList<ReferenceObstacle> collision)
+    {
+        if (!input.Finite || input.Length > 1.000_001 || serverDelta <= TimeSpan.Zero
+            || serverDelta > TimeSpan.FromMilliseconds(250) || !double.IsFinite(maximumSpeed)
+            || !double.IsFinite(acceleration) || maximumSpeed <= 0 || acceleration <= 0
+            || collision.Any(value => !value.Valid))
+            return ReferenceDecision.Reject("INVALID_MOVEMENT_INPUT", state);
+        double seconds = serverDelta.TotalSeconds;
+        ReferenceVector velocity = state.Velocity + input * (acceleration * seconds);
+        if (velocity.Length > maximumSpeed)
+            velocity = velocity * (maximumSpeed / velocity.Length);
+        ReferenceVector position = state.Position + velocity * seconds;
+        if (!position.Finite || collision.Any(value => value.Contains(position)))
+            return ReferenceDecision.Reject("MOVEMENT_BLOCKED", state);
+        return ReferenceDecision.Accept(state with
+        {
+            Position = position,
+            Velocity = velocity,
+            Revision = checked(state.Revision + 1)
+        });
+    }
+
+    public ReferenceDecision ServerTeleport(ReferenceGameState state, ReferenceVector destination,
+        bool serverAbilityGranted, IReadOnlyList<ReferenceObstacle> collision)
+    {
+        if (!serverAbilityGranted) return ReferenceDecision.Reject("TELEPORT_NOT_GRANTED", state);
+        if (!destination.Finite || collision.Any(value => !value.Valid || value.Contains(destination)))
+            return ReferenceDecision.Reject("INVALID_TELEPORT_DESTINATION", state);
+        return ReferenceDecision.Accept(state with
+        {
+            Position = destination,
+            Velocity = default,
+            Revision = checked(state.Revision + 1)
+        });
+    }
+
     public ReferenceDecision Purchase(ReferenceGameState state, string itemId,
         long clientClaimedPrice, ulong expectedRevision, IReadOnlyDictionary<string, long> serverPrices)
     {

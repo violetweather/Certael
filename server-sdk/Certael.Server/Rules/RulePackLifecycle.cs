@@ -34,10 +34,10 @@ public sealed class RulePackLifecycleStore(TimeProvider timeProvider, RulePackVe
         return deployment;
     }
 
-    public RuleDeployment Approve(string packId, string version, string approver)
+    public RuleDeployment Approve(string tenantId, string packId, string version, string approver)
     {
         string subject = RequireSubject(approver);
-        return Update(packId, version, current =>
+        return Update(tenantId, packId, version, current =>
         {
             if (current.Approvals.Any(value => value.ApproverSubject == subject)) return current;
             RuleApproval approval = new(subject, timeProvider.GetUtcNow(), current.Pack.Digest.ToArray());
@@ -46,7 +46,7 @@ public sealed class RulePackLifecycleStore(TimeProvider timeProvider, RulePackVe
         });
     }
 
-    public RuleDeployment Promote(string packId, string version, RuleDeploymentStage stage,
+    public RuleDeployment Promote(string tenantId, string packId, string version, RuleDeploymentStage stage,
         int canaryPercentage, string operatorSubject)
     {
         if (stage is RuleDeploymentStage.Draft or RuleDeploymentStage.Retired)
@@ -59,7 +59,7 @@ public sealed class RulePackLifecycleStore(TimeProvider timeProvider, RulePackVe
         string subject = RequireSubject(operatorSubject);
         lock (_gate)
         {
-            RuleDeployment current = Get(packId, version);
+            RuleDeployment current = Get(tenantId, packId, version);
             int requiredApprovals = stage == RuleDeploymentStage.Enforced ? 2 : 1;
             if (current.Approvals.Select(value => value.ApproverSubject).Distinct(StringComparer.Ordinal).Count() < requiredApprovals)
                 throw new RuleLifecycleException($"{stage} requires {requiredApprovals} distinct approvals.");
@@ -80,9 +80,9 @@ public sealed class RulePackLifecycleStore(TimeProvider timeProvider, RulePackVe
         }
     }
 
-    public RuleDeployment Rollback(string gameId, string environmentId, string operatorSubject)
+    public RuleDeployment Rollback(string tenantId, string gameId, string environmentId, string operatorSubject)
     {
-        string environment = $"{gameId}\0{environmentId}";
+        string environment = $"{tenantId}\0{gameId}\0{environmentId}";
         lock (_gate)
         {
             if (!_history.TryGetValue(environment, out Stack<string>? history) || history.Count == 0)
@@ -105,23 +105,23 @@ public sealed class RulePackLifecycleStore(TimeProvider timeProvider, RulePackVe
         return bucket < deployment.CanaryPercentage;
     }
 
-    public RuleDeployment Get(string packId, string version) =>
-        _deployments.TryGetValue($"{packId}\0{version}", out RuleDeployment? value)
+    public RuleDeployment Get(string tenantId, string packId, string version) =>
+        _deployments.TryGetValue($"{tenantId}\0{packId}\0{version}", out RuleDeployment? value)
             ? value : throw new RuleLifecycleException("Rule pack does not exist.");
 
-    private RuleDeployment Update(string packId, string version, Func<RuleDeployment, RuleDeployment> update)
+    private RuleDeployment Update(string tenantId, string packId, string version, Func<RuleDeployment, RuleDeployment> update)
     {
-        string key = $"{packId}\0{version}";
+        string key = $"{tenantId}\0{packId}\0{version}";
         while (true)
         {
-            RuleDeployment current = Get(packId, version);
+            RuleDeployment current = Get(tenantId, packId, version);
             RuleDeployment next = update(current);
             if (_deployments.TryUpdate(key, next, current)) return next;
         }
     }
 
-    private static string Key(RulePackDocument value) => $"{value.PackId}\0{value.Version}";
-    private static string EnvironmentKey(RulePackDocument value) => $"{value.GameId}\0{value.EnvironmentId}";
+    private static string Key(RulePackDocument value) => $"{value.TenantId}\0{value.PackId}\0{value.Version}";
+    private static string EnvironmentKey(RulePackDocument value) => $"{value.TenantId}\0{value.GameId}\0{value.EnvironmentId}";
     private static string RequireSubject(string value) => !string.IsNullOrWhiteSpace(value) && value.Length <= 128
         ? value : throw new RuleLifecycleException("Operator subject is invalid.");
 }

@@ -16,6 +16,7 @@ public enum RuleDataProvenance
 }
 
 public sealed record RulePackDocument(
+    string TenantId,
     string PackId,
     string Version,
     string GameId,
@@ -50,7 +51,7 @@ public sealed class RulePackCompiler(ECDsa signingKey, string signingKeyId)
     public SignedRulePack CompileAndSign(RulePackDocument document)
     {
         Validate(document);
-        byte[] canonical = CanonicalRulePackSerializer.Serialize(document);
+        byte[] canonical = RulePackCanonicalCodec.Serialize(document);
         byte[] digest = SHA256.HashData(canonical);
         byte[] signature = signingKey.SignHash(digest);
         return new SignedRulePack(document, canonical, digest, signature, signingKeyId);
@@ -59,6 +60,7 @@ public sealed class RulePackCompiler(ECDsa signingKey, string signingKeyId)
     public static void Validate(RulePackDocument document)
     {
         ArgumentNullException.ThrowIfNull(document);
+        RequireIdentifier(document.TenantId, nameof(document.TenantId));
         RequireIdentifier(document.PackId, nameof(document.PackId));
         RequireIdentifier(document.GameId, nameof(document.GameId));
         RequireIdentifier(document.EnvironmentId, nameof(document.EnvironmentId));
@@ -86,6 +88,47 @@ public sealed class RulePackCompiler(ECDsa signingKey, string signingKeyId)
                 or RuleDataProvenance.PlatformAttestation
                 && rule.MaximumRiskContribution > 30)
                 throw new RulePackValidationException("Untrusted or environmental signals are capped at risk 30.");
+            ValidateExpression(rule.Expression);
+        }
+    }
+
+    private static void ValidateExpression(RuleExpression root)
+    {
+        var pending = new Stack<(RuleExpression Expression, int Depth)>();
+        pending.Push((root ?? throw new RulePackValidationException("Rule expression is missing."), 1));
+        int operations = 0;
+        while (pending.TryPop(out (RuleExpression Expression, int Depth) item))
+        {
+            if (++operations > 256 || item.Depth > 32)
+                throw new RulePackValidationException("Rule expression exceeds its operation or depth limit.");
+            switch (item.Expression)
+            {
+                case ConstantExpression constant when constant.Value is null or string or bool
+                    or byte or sbyte or short or ushort or int or uint or long or ulong or decimal:
+                    if (constant.Value is string text && text.Length > 4096)
+                        throw new RulePackValidationException("Rule constant is too long.");
+                    break;
+                case FieldExpression field:
+                    string[] segments = field.Path.Split('.', StringSplitOptions.RemoveEmptyEntries);
+                    if (segments.Length is < 1 or > 16 || segments.Any(segment => segment.Length is < 1 or > 64
+                        || !segment.All(character => char.IsAsciiLetterOrDigit(character) || character == '_')
+                        || !(char.IsAsciiLetter(segment[0]) || segment[0] == '_')))
+                        throw new RulePackValidationException("Rule field path is invalid.");
+                    break;
+                case CompareExpression compare:
+                    pending.Push((compare.Right, item.Depth + 1));
+                    pending.Push((compare.Left, item.Depth + 1));
+                    break;
+                case LogicalExpression logical when logical.Operands.Count is >= 1 and <= 64:
+                    foreach (RuleExpression operand in logical.Operands)
+                        pending.Push((operand, item.Depth + 1));
+                    break;
+                case NotExpression not:
+                    pending.Push((not.Operand, item.Depth + 1));
+                    break;
+                default:
+                    throw new RulePackValidationException("Unsupported or invalid rule expression.");
+            }
         }
     }
 
@@ -102,7 +145,7 @@ public sealed class RulePackVerifier(IReadOnlyDictionary<string, ECDsa> trustedK
     {
         if (!trustedKeys.TryGetValue(pack.SigningKeyId, out ECDsa? key)) return false;
         byte[] canonical;
-        try { RulePackCompiler.Validate(pack.Document); canonical = CanonicalRulePackSerializer.Serialize(pack.Document); }
+        try { RulePackCompiler.Validate(pack.Document); canonical = RulePackCanonicalCodec.Serialize(pack.Document); }
         catch (RulePackValidationException) { return false; }
         byte[] digest = SHA256.HashData(canonical);
         return CryptographicOperations.FixedTimeEquals(canonical, pack.CanonicalDocument)
@@ -111,7 +154,7 @@ public sealed class RulePackVerifier(IReadOnlyDictionary<string, ECDsa> trustedK
     }
 }
 
-internal static class CanonicalRulePackSerializer
+public static class RulePackCanonicalCodec
 {
     private static readonly JsonSerializerOptions Json = new()
     {
@@ -128,14 +171,131 @@ internal static class CanonicalRulePackSerializer
         };
         return JsonSerializer.SerializeToUtf8Bytes(ordered, Json);
     }
+
+    public static RulePackDocument Deserialize(ReadOnlySpan<byte> canonical)
+    {
+        if (canonical.Length is < 1 or > 1_048_576)
+            throw new RulePackValidationException("Canonical rule pack size is invalid.");
+        RulePackDocument document;
+        try
+        {
+            document = JsonSerializer.Deserialize<RulePackDocument>(canonical, Json)
+                ?? throw new RulePackValidationException("Canonical rule pack is empty.");
+        }
+        catch (JsonException error)
+        {
+            throw new RulePackValidationException($"Canonical rule pack is invalid: {error.Message}");
+        }
+        RulePackCompiler.Validate(document);
+        if (!CryptographicOperations.FixedTimeEquals(Serialize(document), canonical))
+            throw new RulePackValidationException("Rule pack encoding is not canonical.");
+        return document;
+    }
 }
 
 public sealed class RulePackValidationException(string message) : Exception(message);
 
 internal sealed class RuleExpressionJsonConverter : System.Text.Json.Serialization.JsonConverter<RuleExpression>
 {
-    public override RuleExpression Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) =>
-        throw new NotSupportedException("Rule pack deserialization uses the dedicated parser.");
+    public override RuleExpression Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    {
+        using JsonDocument document = JsonDocument.ParseValue(ref reader);
+        int operations = 0;
+        return Parse(document.RootElement, 1, ref operations);
+    }
+
+    private static RuleExpression Parse(JsonElement element, int depth, ref int operations)
+    {
+        if (++operations > 256 || depth > 32 || element.ValueKind != JsonValueKind.Object)
+            throw new JsonException("Rule expression exceeds structural limits.");
+        string kind = RequiredString(element, "kind");
+        return kind switch
+        {
+            "constant" => Constant(element),
+            "field" => Field(element),
+            "compare" => Compare(element, depth, ref operations),
+            "logical" => Logical(element, depth, ref operations),
+            "not" => Not(element, depth, ref operations),
+            _ => throw new JsonException("Unknown rule expression kind.")
+        };
+    }
+
+    private static RuleExpression Constant(JsonElement element)
+    {
+        ExactProperties(element, "kind", "value");
+        JsonElement value = Required(element, "value");
+        object? parsed = value.ValueKind switch
+        {
+            JsonValueKind.Null => null,
+            JsonValueKind.True => true,
+            JsonValueKind.False => false,
+            JsonValueKind.String => value.GetString(),
+            JsonValueKind.Number when value.TryGetInt64(out long signed) => signed,
+            JsonValueKind.Number when value.TryGetUInt64(out ulong unsigned) => unsigned,
+            JsonValueKind.Number when value.TryGetDecimal(out decimal number) => number,
+            _ => throw new JsonException("Unsupported rule constant.")
+        };
+        return new ConstantExpression(parsed);
+    }
+
+    private static RuleExpression Field(JsonElement element)
+    {
+        ExactProperties(element, "kind", "source", "path");
+        if (!Enum.TryParse(RequiredString(element, "source"), false, out RuleDataSource source))
+            throw new JsonException("Unknown rule field source.");
+        return new FieldExpression(RequiredString(element, "path"), source);
+    }
+
+    private static RuleExpression Compare(JsonElement element, int depth, ref int operations)
+    {
+        ExactProperties(element, "kind", "operator", "left", "right");
+        if (!Enum.TryParse(RequiredString(element, "operator"), false, out ComparisonOperator operation))
+            throw new JsonException("Unknown comparison operator.");
+        RuleExpression left = Parse(Required(element, "left"), depth + 1, ref operations);
+        RuleExpression right = Parse(Required(element, "right"), depth + 1, ref operations);
+        return new CompareExpression(operation, left, right);
+    }
+
+    private static RuleExpression Logical(JsonElement element, int depth, ref int operations)
+    {
+        ExactProperties(element, "kind", "operator", "operands");
+        if (!Enum.TryParse(RequiredString(element, "operator"), false, out LogicalOperator operation))
+            throw new JsonException("Unknown logical operator.");
+        JsonElement operands = Required(element, "operands");
+        if (operands.ValueKind != JsonValueKind.Array || operands.GetArrayLength() is < 1 or > 64)
+            throw new JsonException("Logical operand count is invalid.");
+        var values = new List<RuleExpression>(operands.GetArrayLength());
+        foreach (JsonElement operand in operands.EnumerateArray())
+            values.Add(Parse(operand, depth + 1, ref operations));
+        return new LogicalExpression(operation, values);
+    }
+
+    private static RuleExpression Not(JsonElement element, int depth, ref int operations)
+    {
+        ExactProperties(element, "kind", "operand");
+        return new NotExpression(Parse(Required(element, "operand"), depth + 1, ref operations));
+    }
+
+    private static JsonElement Required(JsonElement element, string name) =>
+        element.TryGetProperty(name, out JsonElement value) ? value
+            : throw new JsonException($"Missing rule expression property '{name}'.");
+
+    private static string RequiredString(JsonElement element, string name) =>
+        Required(element, name).ValueKind == JsonValueKind.String
+            ? Required(element, name).GetString() ?? throw new JsonException("Null string is invalid.")
+            : throw new JsonException($"Rule expression property '{name}' must be a string.");
+
+    private static void ExactProperties(JsonElement element, params string[] names)
+    {
+        var allowed = new HashSet<string>(names, StringComparer.Ordinal);
+        int count = 0;
+        foreach (JsonProperty property in element.EnumerateObject())
+        {
+            if (!allowed.Remove(property.Name)) throw new JsonException("Unknown or duplicate rule expression property.");
+            count++;
+        }
+        if (count != names.Length || allowed.Count != 0) throw new JsonException("Rule expression property set is incomplete.");
+    }
 
     public override void Write(Utf8JsonWriter writer, RuleExpression value, JsonSerializerOptions options)
     {

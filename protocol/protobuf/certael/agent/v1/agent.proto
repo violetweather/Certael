@@ -20,6 +20,7 @@ message AgentPolicyClaimsV1 {
   uint32 disconnect_grace_seconds = 8;
   string minimum_agent_version = 9;
   int64 expires_at_unix = 10;
+  string tenant_id = 11;
 }
 
 message SignedAgentPolicyV1 {

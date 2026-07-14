@@ -15,7 +15,9 @@ public sealed class AgentApiLifecycle(
     AgentGrantSigner signer,
     AgentReportVerifier verifier,
     IAgentSessionStore store,
-    TimeProvider clock)
+    TimeProvider clock,
+    IAgentPolicyResolver policies,
+    IAgentBuildRegistry builds)
 {
     public async ValueTask<AgentLaunchBundle> LaunchAsync(AgentLaunchParameters request,
         CancellationToken cancellationToken)
@@ -27,13 +29,16 @@ public sealed class AgentApiLifecycle(
             || !Identifier(request.BuildId) || request.AgentPublicKey.Length != 32
             || request.SessionLifetime < TimeSpan.FromMinutes(1)
             || request.SessionLifetime > TimeSpan.FromHours(8)
-            || request.Policy.ExpiresAt - now < TimeSpan.FromMinutes(1)
-            || request.Policy.ExpiresAt - now > TimeSpan.FromHours(24)
-            || request.Policy.GameId != request.GameId
-            || request.Policy.EnvironmentId != request.EnvironmentId)
+            || !Identifier(request.Policy.PolicyId))
             throw new ArgumentException("Agent launch request is invalid.");
 
-        SignedAgentPolicy policy = signer.IssuePolicy(request.Policy, now);
+        if (!await builds.IsApprovedAsync(request.TenantId, request.GameId,
+            request.EnvironmentId, request.BuildId, cancellationToken))
+            throw new AgentBuildRegistryException("Agent build is not approved.");
+        AgentPolicyDeployment approved = await policies.ResolveAsync(request.Policy.PolicyId,
+            request.TenantId, request.GameId, request.EnvironmentId,
+            $"{request.PlayerSubject}\0{request.MatchId}", now, cancellationToken);
+        SignedAgentPolicy policy = approved.SignedPolicy;
         string sessionId = Guid.NewGuid().ToString("N");
         DateTimeOffset grantExpiresAt = now.AddSeconds(60);
         var grantClaims = new AgentLaunchGrantClaims(1, sessionId, request.TenantId,

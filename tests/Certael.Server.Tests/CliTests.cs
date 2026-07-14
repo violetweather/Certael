@@ -1,5 +1,8 @@
 extern alias certaelcli;
 
+using System.Text.Json;
+using NSec.Cryptography;
+
 namespace Certael.Server.Tests;
 
 public sealed class CliTests
@@ -28,6 +31,37 @@ public sealed class CliTests
             Assert.Equal(0, await certaelcli::CertaelCli.RunAsync(["manifest", "generate", root, second], stdout, stderr));
             string content = await File.ReadAllTextAsync(second, TestContext.Current.CancellationToken);
             Assert.True(content.IndexOf("a.txt", StringComparison.Ordinal) < content.IndexOf("b.txt", StringComparison.Ordinal));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public async Task GeneratesMatchingDevelopmentAgentKeyAndPublicTrustStoreWithoutOverwrite()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "certael-agent-key-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        string privatePath = Path.Combine(root, "agent.key");
+        string trustPath = Path.Combine(root, "trust-store.json");
+        using var stdout = new StringWriter();
+        using var stderr = new StringWriter();
+        try
+        {
+            Assert.Equal(0, await certaelcli::CertaelCli.RunAsync([
+                "agent-key", "generate-development", "development-key", privatePath, trustPath
+            ], stdout, stderr));
+            byte[] privateBytes = await File.ReadAllBytesAsync(privatePath,
+                TestContext.Current.CancellationToken);
+            using Key privateKey = Key.Import(SignatureAlgorithm.Ed25519, privateBytes,
+                KeyBlobFormat.RawPrivateKey);
+            using JsonDocument trust = JsonDocument.Parse(await File.ReadAllBytesAsync(trustPath,
+                TestContext.Current.CancellationToken));
+            string expected = Convert.ToHexString(privateKey.PublicKey.Export(
+                KeyBlobFormat.RawPublicKey)).ToLowerInvariant();
+            Assert.Equal(expected, trust.RootElement.GetProperty("keys")[0]
+                .GetProperty("public_key_hex").GetString());
+            Assert.Equal(2, await certaelcli::CertaelCli.RunAsync([
+                "agent-key", "generate-development", "development-key", privatePath, trustPath
+            ], stdout, stderr));
         }
         finally { Directory.Delete(root, true); }
     }

@@ -14,6 +14,8 @@ public sealed class RulePackLifecycleTests
         var verifier = new RulePackVerifier(new Dictionary<string, ECDsa> { ["rules-key-1"] = key });
 
         Assert.True(verifier.Verify(signed));
+        Assert.Equal(document.TenantId,
+            RulePackCanonicalCodec.Deserialize(signed.CanonicalDocument).TenantId);
         Assert.False(verifier.Verify(signed with { CanonicalDocument = signed.CanonicalDocument.Append((byte)0).ToArray() }));
         Assert.Throws<RulePackValidationException>(() =>
             new RulePackCompiler(key, "rules-key-1").CompileAndSign(
@@ -33,20 +35,20 @@ public sealed class RulePackLifecycleTests
         store.AddDraft(second, "author");
 
         Assert.Throws<RuleLifecycleException>(() =>
-            store.Promote("example.inventory", "1.0.0", RuleDeploymentStage.Enforced, 0, "operator"));
-        store.Approve("example.inventory", "1.0.0", "reviewer-a");
-        store.Approve("example.inventory", "1.0.0", "reviewer-b");
+            store.Promote("tenant", "example.inventory", "1.0.0", RuleDeploymentStage.Enforced, 0, "operator"));
+        store.Approve("tenant", "example.inventory", "1.0.0", "reviewer-a");
+        store.Approve("tenant", "example.inventory", "1.0.0", "reviewer-b");
         RuleDeployment initial = store.Promote(
-            "example.inventory", "1.0.0", RuleDeploymentStage.Enforced, 0, "operator");
+            "tenant", "example.inventory", "1.0.0", RuleDeploymentStage.Enforced, 0, "operator");
         Assert.True(store.IsInCanary(initial, "any-session"));
 
-        store.Approve("example.inventory", "1.1.0", "reviewer-a");
+        store.Approve("tenant", "example.inventory", "1.1.0", "reviewer-a");
         RuleDeployment canary = store.Promote(
-            "example.inventory", "1.1.0", RuleDeploymentStage.Canary, 10, "operator");
+            "tenant", "example.inventory", "1.1.0", RuleDeploymentStage.Canary, 10, "operator");
         bool assignment = store.IsInCanary(canary, "stable-session");
         Assert.Equal(assignment, store.IsInCanary(canary, "stable-session"));
 
-        RuleDeployment rolledBack = store.Rollback("example", "prod", "operator");
+        RuleDeployment rolledBack = store.Rollback("tenant", "example", "prod", "operator");
         Assert.Equal("1.0.0", rolledBack.Pack.Document.Version);
         Assert.Equal(RuleDeploymentStage.Enforced, rolledBack.Stage);
     }
@@ -73,8 +75,48 @@ public sealed class RulePackLifecycleTests
         Assert.Throws<RulePackValidationException>(() => compiler.CompileAndSign(duplicate));
     }
 
+    [Fact]
+    public void LifecycleKeysAndLookupsAreTenantScoped()
+    {
+        using ECDsa key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        var compiler = new RulePackCompiler(key, "key");
+        var store = new RulePackLifecycleStore(TimeProvider.System,
+            new RulePackVerifier(new Dictionary<string, ECDsa> { ["key"] = key }));
+        SignedRulePack first = compiler.CompileAndSign(Document("1.0.0", RuleDataProvenance.AuthoritativeState, 80));
+        SignedRulePack second = compiler.CompileAndSign(first.Document with { TenantId = "other-tenant" });
+
+        store.AddDraft(first, "author");
+        store.AddDraft(second, "author");
+
+        Assert.Equal("tenant", store.Get("tenant", "example.inventory", "1.0.0").Pack.Document.TenantId);
+        Assert.Equal("other-tenant", store.Get("other-tenant", "example.inventory", "1.0.0").Pack.Document.TenantId);
+        Assert.Throws<RuleLifecycleException>(() => store.Get("missing", "example.inventory", "1.0.0"));
+    }
+
+    [Fact]
+    public void CompilerRejectsOversizedAndInvalidExpressionsBeforeSigning()
+    {
+        using ECDsa key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        var compiler = new RulePackCompiler(key, "key");
+        RulePackDocument document = Document("1.0.0", RuleDataProvenance.AuthoritativeState, 80);
+        RuleExpression tooDeep = new ConstantExpression(true);
+        for (int index = 0; index < 33; index++) tooDeep = new NotExpression(tooDeep);
+
+        Assert.Throws<RulePackValidationException>(() => compiler.CompileAndSign(document with
+        {
+            Rules = [document.Rules[0] with { Expression = tooDeep }]
+        }));
+        Assert.Throws<RulePackValidationException>(() => compiler.CompileAndSign(document with
+        {
+            Rules = [document.Rules[0] with
+            {
+                Expression = new FieldExpression("non-ascii-ä", RuleDataSource.Request)
+            }]
+        }));
+    }
+
     private static RulePackDocument Document(string version, RuleDataProvenance provenance, int risk) =>
-        new("example.inventory", version, "example", "prod", 1, 1,
+        new("tenant", "example.inventory", version, "example", "prod", 1, 1,
         [
             new RulePackRule("inventory.craft.quantity", "1.0.0", provenance,
                 "inventory.craft", "INVALID_QUANTITY", risk,

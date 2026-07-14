@@ -20,6 +20,18 @@ public sealed class ReferenceGameAdversarialTests
         Assert.Equal("MISSING_INGREDIENTS", rules.Craft(state, "wood", "plank", 6, 1).PublicReason);
         Assert.False(rules.Target(state, "hidden").Passed);
 
+        var wall = new ReferenceObstacle(0.5, -1, 2, 1);
+        Assert.Equal("INVALID_MOVEMENT_INPUT", rules.Move(state,
+            new ReferenceVector(2, 0), TimeSpan.FromMilliseconds(50), 10, 20, []).PublicReason);
+        ReferenceDecision moved = rules.Move(state, new ReferenceVector(1, 0),
+            TimeSpan.FromMilliseconds(50), 10, 20, []);
+        Assert.True(moved.Allowed);
+        Assert.NotEqual(new ReferenceVector(1_000, 1_000), moved.State.Position);
+        Assert.Equal("MOVEMENT_BLOCKED", rules.Move(state, new ReferenceVector(1, 0),
+            TimeSpan.FromMilliseconds(250), 10, 20, [wall]).PublicReason);
+        Assert.Equal("TELEPORT_NOT_GRANTED", rules.ServerTeleport(state,
+            new ReferenceVector(500, 500), false, []).PublicReason);
+
         DateTimeOffset now = DateTimeOffset.UtcNow;
         ReferenceDecision first = rules.UseAbility(state, now, TimeSpan.FromSeconds(5));
         Assert.True(first.Allowed);

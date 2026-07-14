@@ -34,17 +34,18 @@ should not share the same production policy.
 
 ## Signed protection profiles
 
-A `SignedProtectionProfile` binds immutable action policy to one game and
-environment. Each action registration supplies its request schema/version, rate
+A `SignedProtectionProfile` binds immutable action policy to one tenant, game,
+and environment. Each action registration supplies its request schema/version, rate
 window, and enabled protection names. Admission-store failure is deny-only;
 rule uncertainty returns `Indeterminate`.
 
-`ProtectionProfileLifecycleStore` verifies the profile signature when a draft is
-added. Shadow and canary promotion require an approval over the exact digest;
-enforcement requires two distinct approvers. Canary assignment is deterministic
-per session, and rollback reactivates the prior verified profile. The current
-lifecycle store is in-memory; production persistence and authenticated profile
-administration remain a documented pre-1.0 gate.
+`ProtectionProfileLifecycleStore` is the single-process development implementation.
+Production uses `PostgresSignedConfigurationStore`, which re-verifies canonical
+content, digest, and signature on every read and stores tenant-isolated approvals
+and active/previous deployment pointers under forced row-level security. Shadow
+and canary promotion require one exact-digest approval; enforcement requires two
+distinct approvers. Authenticated `/v1/admin/configurations` operations support
+draft, approval, promotion, rollback, and retirement with audit records.
 
 `CertaelServerEngine.ValidateAndExecuteAsync` accepts the signed profile rather
 than a loose action policy. It verifies the signature and game/environment

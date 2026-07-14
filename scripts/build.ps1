@@ -24,8 +24,10 @@ function Build-Native {
 function Get-GodotCpp {
     $Path = "$Root/engines/godot/godot-cpp"
     if (-not (Test-Path "$Path/.git")) { git clone --filter=blob:none $GODOT_CPP_REPOSITORY $Path }
-    git -C $Path fetch --depth 1 origin $GODOT_CPP_COMMIT
-    git -C $Path checkout --detach $GODOT_CPP_COMMIT
+    if ((git -C $Path rev-parse HEAD) -ne $GODOT_CPP_COMMIT) {
+        git -C $Path fetch --depth 1 origin $GODOT_CPP_COMMIT
+        git -C $Path checkout --detach $GODOT_CPP_COMMIT
+    }
     if ((git -C $Path rev-parse HEAD) -ne $GODOT_CPP_COMMIT) { throw "godot-cpp pin mismatch" }
 }
 function Build-Godot {

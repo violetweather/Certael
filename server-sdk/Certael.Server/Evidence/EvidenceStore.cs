@@ -6,7 +6,8 @@ public interface IEvidenceStore
 {
     ValueTask SaveAsync(EvidenceBundle bundle, CancellationToken cancellationToken);
     ValueTask<EvidenceBundle?> FindAsync(string tenantId, Guid verdictId, CancellationToken cancellationToken);
-    ValueTask DeletePlayerAsync(string tenantId, string playerSubject, CancellationToken cancellationToken);
+    ValueTask DeletePlayerAsync(string tenantId, string environmentId, string playerSubject,
+        CancellationToken cancellationToken);
 }
 
 public sealed class InMemoryEvidenceStore : IEvidenceStore
@@ -29,10 +30,12 @@ public sealed class InMemoryEvidenceStore : IEvidenceStore
         return ValueTask.FromResult(_bundles.GetValueOrDefault((tenantId, verdictId)));
     }
 
-    public ValueTask DeletePlayerAsync(string tenantId, string playerSubject, CancellationToken cancellationToken)
+    public ValueTask DeletePlayerAsync(string tenantId, string environmentId,
+        string playerSubject, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         foreach (var entry in _bundles.Where(value => value.Key.Tenant == tenantId
+            && value.Value.Verdict.EnvironmentId == environmentId
             && value.Value.Verdict.PlayerSubject == playerSubject))
             _bundles.TryRemove(entry.Key, out _);
         return ValueTask.CompletedTask;

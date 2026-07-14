@@ -20,6 +20,15 @@ public sealed class PostgresEvidenceStore(
         await using NpgsqlConnection connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using NpgsqlTransaction transaction = await connection.BeginTransactionAsync(cancellationToken);
         await SetTenant(connection, transaction, bundle.Verdict.TenantId, cancellationToken);
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        await using (var purge = new NpgsqlCommand(
+            "DELETE FROM certael_evidence WHERE tenant_id=$1 AND expires_at <= $2",
+            connection, transaction))
+        {
+            purge.Parameters.AddWithValue(bundle.Verdict.TenantId);
+            purge.Parameters.AddWithValue(now);
+            await purge.ExecuteNonQueryAsync(cancellationToken);
+        }
         const string sql = """
             INSERT INTO certael_evidence(tenant_id, verdict_id, game_id, environment_id,
               player_subject, bundle, replay_digest, expires_at)
@@ -30,9 +39,20 @@ public sealed class PostgresEvidenceStore(
         command.Parameters.AddWithValue(bundle.Verdict.GameId); command.Parameters.AddWithValue(bundle.Verdict.EnvironmentId);
         command.Parameters.AddWithValue(bundle.Verdict.PlayerSubject);
         command.Parameters.AddWithValue(NpgsqlDbType.Jsonb, JsonSerializer.Serialize(bundle, Json));
-        command.Parameters.AddWithValue(bundle.ReplayDigest); command.Parameters.AddWithValue(DateTimeOffset.UtcNow + retention);
+        command.Parameters.AddWithValue(bundle.ReplayDigest);
+        command.Parameters.AddWithValue(now + RetentionFor(bundle, retention));
         await command.ExecuteNonQueryAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+    }
+
+    public static TimeSpan RetentionFor(EvidenceBundle bundle, TimeSpan configured)
+    {
+        if (configured <= TimeSpan.Zero || configured > TimeSpan.FromDays(3660))
+            throw new InvalidOperationException("Evidence retention is invalid.");
+        bool containsAdvisory = bundle.Findings.Any(finding =>
+            finding.Trust != FindingTrust.Authoritative);
+        return containsAdvisory && configured > TimeSpan.FromDays(30)
+            ? TimeSpan.FromDays(30) : configured;
     }
 
     public async ValueTask<EvidenceBundle?> FindAsync(string tenantId, Guid verdictId,
@@ -50,15 +70,18 @@ public sealed class PostgresEvidenceStore(
         return value is string json ? JsonSerializer.Deserialize<EvidenceBundle>(json, Json) : null;
     }
 
-    public async ValueTask DeletePlayerAsync(string tenantId, string playerSubject,
-        CancellationToken cancellationToken)
+    public async ValueTask DeletePlayerAsync(string tenantId, string environmentId,
+        string playerSubject, CancellationToken cancellationToken)
     {
         await using NpgsqlConnection connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using NpgsqlTransaction transaction = await connection.BeginTransactionAsync(cancellationToken);
         await SetTenant(connection, transaction, tenantId, cancellationToken);
         await using var command = new NpgsqlCommand(
-            "DELETE FROM certael_evidence WHERE tenant_id=$1 AND player_subject=$2", connection, transaction);
-        command.Parameters.AddWithValue(tenantId); command.Parameters.AddWithValue(playerSubject);
+            "DELETE FROM certael_evidence WHERE tenant_id=$1 AND environment_id=$2 AND player_subject=$3",
+            connection, transaction);
+        command.Parameters.AddWithValue(tenantId);
+        command.Parameters.AddWithValue(environmentId);
+        command.Parameters.AddWithValue(playerSubject);
         await command.ExecuteNonQueryAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
     }

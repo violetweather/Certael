@@ -22,6 +22,7 @@ Start from `rules/examples/inventory.yaml`:
 apiVersion: certael.dev/v1
 kind: RulePack
 metadata:
+  tenantId: example-tenant
   id: example.inventory
   version: 1.0.0
   gameId: example
@@ -111,8 +112,12 @@ Callbacks must:
 6. Monitor rejection rate, latency, indeterminate results, and player impact.
 7. Roll back to the recorded prior deployment when thresholds are exceeded.
 
-Approvals and promotion APIs currently exist in the server SDK; a production
-operator must expose them through an authenticated, audited control plane.
+Production deployments use `PostgresSignedConfigurationStore` and the authenticated
+`/v1/admin/configurations` endpoints. Configure trusted public ECDSA keys under
+`ConfigurationSigning:TrustedKeys`; the signing private key stays in the offline
+or managed signing workflow. All mutations require tenant/environment-bound OIDC,
+the appropriate `configurations:*` scope, a validated client certificate, a reason,
+and produce an audit event.
 
 ## Genre examples
 

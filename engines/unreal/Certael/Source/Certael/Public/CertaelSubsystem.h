@@ -23,10 +23,21 @@ struct FCertaelSessionBinding {
     UPROPERTY(EditAnywhere, BlueprintReadWrite) int64 InitialSequence = 0;
 };
 
+USTRUCT(BlueprintType)
+struct FCertaelAgentHello {
+    GENERATED_BODY()
+    UPROPERTY(BlueprintReadOnly) int32 ProtocolVersion = 0;
+    UPROPERTY(BlueprintReadOnly) FString AgentVersion;
+    UPROPERTY(BlueprintReadOnly) TArray<uint8> AgentPublicKey;
+    UPROPERTY(BlueprintReadOnly) FString BuildId;
+    UPROPERTY(BlueprintReadOnly) TArray<uint8> ExecutableSha256;
+};
+
 UCLASS()
 class CERTAEL_API UCertaelSubsystem : public UGameInstanceSubsystem {
     GENERATED_BODY()
     void* Runtime = nullptr;
+    void* AgentChannel = nullptr;
 public:
     virtual void Initialize(FSubsystemCollectionBase& Collection) override;
     virtual void Deinitialize() override;
@@ -45,4 +56,19 @@ public:
     FCertaelAuthorizedAction AuthorizeAction(
         const FString& ActionType, const FString& RequestSchema,
         int32 SchemaVersion, const TArray<uint8>& Payload);
+
+    /** Opens the private channel inherited when Certael Agent launched the game. */
+    UFUNCTION(BlueprintCallable, Category="Certael|Agent")
+    bool ConnectToInheritedAgent(FCertaelAgentHello& Hello);
+
+    /** Relays only server-signed policy and grant bytes to the Agent. */
+    UFUNCTION(BlueprintCallable, Category="Certael|Agent")
+    bool BindAgentLaunchBundle(const TArray<uint8>& SignedPolicy, const TArray<uint8>& SignedGrant);
+
+    /** Blocking call: run from a worker thread, never the game/render thread. */
+    UFUNCTION(BlueprintCallable, Category="Certael|Agent")
+    bool ExchangeAgentChallenge(const TArray<uint8>& CanonicalChallenge, TArray<uint8>& SignedReport);
+
+    UFUNCTION(BlueprintCallable, Category="Certael|Agent")
+    void ShutdownAgent();
 };

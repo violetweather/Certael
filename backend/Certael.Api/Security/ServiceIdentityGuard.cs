@@ -14,13 +14,16 @@ public static class ServiceIdentityGuard
         X509Certificate2? clientCertificate,
         string requiredScope,
         string requestedTenant,
-        string requestedEnvironment)
+        string requestedEnvironment,
+        Func<X509Certificate2, bool>? trustValidator = null)
     {
         if (principal.Identity?.IsAuthenticated != true || clientCertificate is null)
             return ServiceIdentityDecision.Unauthenticated;
         DateTimeOffset now = DateTimeOffset.UtcNow;
         if (now < clientCertificate.NotBefore.ToUniversalTime()
             || now > clientCertificate.NotAfter.ToUniversalTime())
+            return ServiceIdentityDecision.Unauthenticated;
+        if (!(trustValidator ?? CertificateChainsToTrustedClientRoot)(clientCertificate))
             return ServiceIdentityDecision.Unauthenticated;
         if (!CertificateIsBoundToToken(principal, clientCertificate))
             return ServiceIdentityDecision.Forbidden;
@@ -30,6 +33,19 @@ public static class ServiceIdentityGuard
             || !string.Equals(principal.FindFirstValue("environment_id"), requestedEnvironment, StringComparison.Ordinal))
             return ServiceIdentityDecision.Forbidden;
         return ServiceIdentityDecision.Allowed;
+    }
+
+    private static bool CertificateChainsToTrustedClientRoot(X509Certificate2 certificate)
+    {
+        using var chain = new X509Chain();
+        chain.ChainPolicy.RevocationMode = X509RevocationMode.Online;
+        chain.ChainPolicy.RevocationFlag = X509RevocationFlag.ExcludeRoot;
+        chain.ChainPolicy.VerificationFlags = X509VerificationFlags.NoFlag;
+        chain.ChainPolicy.UrlRetrievalTimeout = TimeSpan.FromSeconds(5);
+        chain.ChainPolicy.ApplicationPolicy.Add(
+            new Oid("1.3.6.1.5.5.7.3.2", "TLS Web Client Authentication"));
+        try { return chain.Build(certificate); }
+        catch (CryptographicException) { return false; }
     }
 
     private static IEnumerable<string> Scopes(ClaimsPrincipal principal) =>

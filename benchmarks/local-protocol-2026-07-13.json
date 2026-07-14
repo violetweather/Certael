@@ -1,0 +1,28 @@
+{
+  "date": "2026-07-13",
+  "commit_basis": "Certael pre-1.0 completion candidate based on 2b4d58e",
+  "command": "cargo run --release --locked -p certael-load -- --sessions 100000 --actions-per-session 10",
+  "host": {
+    "cpu": "Apple M4",
+    "logical_cpus": 10,
+    "memory_bytes": 17179869184,
+    "os": "Darwin 24.6.0 arm64"
+  },
+  "result": {
+    "sessions": 100000,
+    "actions": 1000000,
+    "encoded_bytes": 246888900,
+    "elapsed_seconds": 33.212864,
+    "actions_per_second": 30108.82
+  },
+  "scope": "in-process canonical encode, Ed25519 sign, decode, and verify",
+  "excluded": [
+    "network transport",
+    "Redis admission",
+    "PostgreSQL transaction and outbox",
+    "game callbacks",
+    "multi-replica failover",
+    "burst testing",
+    "24-hour soak"
+  ]
+}

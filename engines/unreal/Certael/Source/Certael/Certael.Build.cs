@@ -12,15 +12,24 @@ public class Certael : ModuleRules
         if (Target.Platform == UnrealTargetPlatform.Win64)
         {
             PublicAdditionalLibraries.Add(Path.Combine(Native, "Win64", "certael_c_api.lib"));
+            PublicAdditionalLibraries.Add(Path.Combine(Native, "Win64", "certael_agent_probe.lib"));
             RuntimeDependencies.Add("$(PluginDir)/Binaries/Win64/certael_c_api.dll");
         }
         else if (Target.Platform == UnrealTargetPlatform.Linux)
         {
             PublicAdditionalLibraries.Add(Path.Combine(Native, "Linux", "libcertael_c_api.a"));
+            PublicAdditionalLibraries.Add(Path.Combine(Native, "Linux", "libcertael_agent_probe.a"));
+        }
+        else if (Target.Platform == UnrealTargetPlatform.Mac)
+        {
+            string Architecture = Target.Architecture.ToString().ToLowerInvariant();
+            string Folder = Architecture.Contains("arm64") ? "arm64" : "x86_64";
+            PublicAdditionalLibraries.Add(Path.Combine(Native, "Mac", Folder, "libcertael_c_api.a"));
+            PublicAdditionalLibraries.Add(Path.Combine(Native, "Mac", Folder, "libcertael_agent_probe.a"));
         }
         else
         {
-            throw new BuildException("Certael supports Win64 and Linux targets in this release.");
+            throw new BuildException("Certael supports Win64, Linux, and macOS targets in this release.");
         }
     }
 }

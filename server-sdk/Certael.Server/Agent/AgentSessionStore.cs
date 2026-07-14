@@ -7,6 +7,8 @@ public sealed record AgentStoredHealth(
     string AgentSessionId, string EnvironmentId, string AuthoritativeServerId,
     DateTimeOffset ExpiresAt, DateTimeOffset? LastReportAt, DateTimeOffset? RevokedAt);
 
+public sealed record AgentPlayerDeletionResult(int SessionsDeleted, int RawReportsDeleted);
+
 public interface IAgentSessionStore
 {
     ValueTask CreateAsync(VerifiedAgentSession session, CancellationToken cancellationToken);
@@ -23,4 +25,6 @@ public interface IAgentSessionStore
         CancellationToken cancellationToken);
     ValueTask<bool> RevokeAsync(string tenantId, string agentSessionId, string reason,
         DateTimeOffset revokedAt, CancellationToken cancellationToken);
+    ValueTask<AgentPlayerDeletionResult> DeletePlayerAsync(string tenantId,
+        string environmentId, string playerSubject, CancellationToken cancellationToken);
 }

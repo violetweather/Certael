@@ -14,16 +14,32 @@ public sealed class AgentApiLifecycleTests
         using Key agentKey = Key.Create(SignatureAlgorithm.Ed25519,
             new KeyCreationParameters { ExportPolicy = KeyExportPolicies.AllowPlaintextExport });
         var store = new InMemoryAgentSessionStore(clock);
-        var lifecycle = new AgentApiLifecycle(new AgentGrantSigner(serviceKey, "agent-signing-1"),
-            new AgentReportVerifier(), store, clock);
+        var signer = new AgentGrantSigner(serviceKey, "agent-signing-1");
+        var policies = new AgentPolicyLifecycleStore(signer, clock);
         byte[] publicKey = agentKey.PublicKey.Export(KeyBlobFormat.RawPublicKey);
-        var policy = new AgentPolicyClaims(1, "competitive", "game", "prod",
+        var policy = new AgentPolicyClaims(1, "competitive", "tenant", "game", "prod",
             AgentRequirementMode.Required, 15, 60, 30, "0.1.0", now.AddHours(1));
-
-        AgentLaunchBundle launch = await lifecycle.LaunchAsync(new AgentLaunchParameters(
+        AgentPolicyDeployment immutablePolicy = policies.AddDraft(policy, "author");
+        policies.Approve(policy.TenantId, policy.PolicyId, "reviewer-a");
+        policies.Approve(policy.TenantId, policy.PolicyId, "reviewer-b");
+        policies.Promote(policy.TenantId, policy.PolicyId,
+            AgentPolicyDeploymentStage.Enforced, 0, "operator");
+        var builds = new InMemoryAgentBuildRegistry(clock);
+        var lifecycle = new AgentApiLifecycle(signer, new AgentReportVerifier(), store, clock,
+            policies, builds);
+        AgentLaunchParameters parameters = new(
             "tenant", "game", "prod", "player", "match", "server-a", "build",
-            publicKey, policy, TimeSpan.FromHours(1)), TestContext.Current.CancellationToken);
+            publicKey, policy with { RequirementMode = AgentRequirementMode.Disabled,
+                ReportSeconds = 3_600 }, TimeSpan.FromHours(1));
+        await Assert.ThrowsAsync<AgentBuildRegistryException>(() =>
+            lifecycle.LaunchAsync(parameters, TestContext.Current.CancellationToken).AsTask());
+        await builds.RegisterAsync("tenant", "game", "prod", "build", "operator",
+            TestContext.Current.CancellationToken);
+
+        AgentLaunchBundle launch = await lifecycle.LaunchAsync(parameters,
+            TestContext.Current.CancellationToken);
         Assert.Equal(64, launch.Grant.Signature.Length);
+        Assert.Equal(immutablePolicy.SignedPolicy.Claims, launch.Policy.Claims);
         Assert.NotEmpty(AgentApiCodec.EncodeLaunchChannelBundle(launch));
         Assert.Null(await lifecycle.ChallengeAsync("tenant", "prod", "server-b",
             launch.AgentSessionId, TestContext.Current.CancellationToken));
@@ -50,6 +66,17 @@ public sealed class AgentApiLifecycleTests
         Assert.True(await lifecycle.RevokeAsync("tenant", "prod", "server-a",
             launch.AgentSessionId, "match ended", TestContext.Current.CancellationToken));
         Assert.Equal("revoked", (await lifecycle.HealthAsync("tenant", "prod", "server-a",
+            launch.AgentSessionId, TimeSpan.FromMinutes(2),
+            TestContext.Current.CancellationToken)).State);
+        await store.CreateAsync(new VerifiedAgentSession("other-environment", "tenant", "game",
+            "staging", "player", "match", "build", publicKey, 0, new byte[32],
+            now.AddHours(1), "server-a"), TestContext.Current.CancellationToken);
+        AgentPlayerDeletionResult deleted = await store.DeletePlayerAsync("tenant", "prod",
+            "player", TestContext.Current.CancellationToken);
+        Assert.Equal(1, deleted.SessionsDeleted);
+        Assert.NotNull(await store.FindAsync("tenant", "other-environment",
+            TestContext.Current.CancellationToken));
+        Assert.Equal("missing", (await lifecycle.HealthAsync("tenant", "prod", "server-a",
             launch.AgentSessionId, TimeSpan.FromMinutes(2),
             TestContext.Current.CancellationToken)).State);
     }
