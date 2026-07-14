@@ -41,7 +41,7 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           repository: violetweather/Certael-Agent
-          ref: 15f9dbe78773fe9cda87b2f5bd210a2bd9a937a5
+          ref: e92a77bc9d21816c8017330efb5a618f9af07c86
           path: certael-agent-source
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
@@ -61,7 +61,7 @@ jobs:
           cp LICENSE "artifacts/certael-native-${{ matrix.artifact }}/LICENSE"
           cp certael-agent-source/LICENSE "artifacts/certael-native-${{ matrix.artifact }}/CERTAEL_AGENT_LICENSE"
           printf '%s\n' "$GITHUB_SHA" > "artifacts/certael-native-${{ matrix.artifact }}/SOURCE_COMMIT"
-          printf '%s\n' '15f9dbe78773fe9cda87b2f5bd210a2bd9a937a5' > "artifacts/certael-native-${{ matrix.artifact }}/AGENT_SOURCE_COMMIT"
+          printf '%s\n' 'e92a77bc9d21816c8017330efb5a618f9af07c86' > "artifacts/certael-native-${{ matrix.artifact }}/AGENT_SOURCE_COMMIT"
           cp compatibility/core-agent-v1.json "artifacts/certael-native-${{ matrix.artifact }}/"
           cp "target/${{ matrix.target }}/release/${{ matrix.library }}" "artifacts/certael-native-${{ matrix.artifact }}/lib/"
           if [[ "${{ runner.os }}" == "Windows" ]]; then
@@ -146,7 +146,7 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           repository: violetweather/Certael-Agent
-          ref: 15f9dbe78773fe9cda87b2f5bd210a2bd9a937a5
+          ref: e92a77bc9d21816c8017330efb5a618f9af07c86
           path: certael-agent-source
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
@@ -178,7 +178,7 @@ jobs:
             cp "$GITHUB_WORKSPACE/certael-agent-source/target/${{ matrix.target }}/release/libcertael_agent_probe.dylib" \
               "addons/certael/bin/libcertael_agent_probe.macos.${{ matrix.arch }}.dylib"
           fi
-          printf '%s\n' '15f9dbe78773fe9cda87b2f5bd210a2bd9a937a5' > addons/certael/bin/AGENT_SOURCE_COMMIT
+          printf '%s\n' 'e92a77bc9d21816c8017330efb5a618f9af07c86' > addons/certael/bin/AGENT_SOURCE_COMMIT
           cp "$GITHUB_WORKSPACE/certael-agent-source/LICENSE" addons/certael/bin/CERTAEL_AGENT_LICENSE
       - name: Build Godot adapter with MSVC
         if: runner.os == 'Windows'
@@ -226,7 +226,7 @@ jobs:
             Copy-Item "$env:GITHUB_WORKSPACE\certael-agent-source\target\${{ matrix.target }}\release\certael_agent_probe.dll" `
               "addons/certael/bin/certael_agent_probe.dll" -Force
             Set-Content -Path "addons/certael/bin/AGENT_SOURCE_COMMIT" `
-              -Value "15f9dbe78773fe9cda87b2f5bd210a2bd9a937a5" -NoNewline
+              -Value "e92a77bc9d21816c8017330efb5a618f9af07c86" -NoNewline
             Copy-Item "$env:GITHUB_WORKSPACE\certael-agent-source\LICENSE" `
               "addons/certael/bin/CERTAEL_AGENT_LICENSE" -Force
           }
