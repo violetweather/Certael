@@ -28,12 +28,12 @@ public sealed class RulePackYamlParser(
 
         YamlMappingNode metadata = Mapping(root, "metadata");
         YamlMappingNode compatibility = Mapping(root, "compatibility");
-        RejectUnknown(metadata, "id", "version", "gameId", "environmentId");
+        RejectUnknown(metadata, "tenantId", "id", "version", "gameId", "environmentId");
         RejectUnknown(compatibility, "protocolMinimum", "protocolMaximum");
         YamlSequenceNode rules = Sequence(root, "rules");
         RulePackRule[] parsedRules = rules.Children.Select(ParseRule).ToArray();
         return new RulePackDocument(
-            Scalar(metadata, "id"), Scalar(metadata, "version"), Scalar(metadata, "gameId"),
+            Scalar(metadata, "tenantId"), Scalar(metadata, "id"), Scalar(metadata, "version"), Scalar(metadata, "gameId"),
             Scalar(metadata, "environmentId"), UInt(compatibility, "protocolMinimum"),
             UInt(compatibility, "protocolMaximum"), parsedRules);
     }

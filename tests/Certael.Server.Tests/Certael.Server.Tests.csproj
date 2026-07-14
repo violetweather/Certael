@@ -13,6 +13,7 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="../../rules/examples/inventory.yaml" Link="fixtures/inventory.yaml" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../../compatibility/core-agent-v1.json" Link="fixtures/core-agent-v1.json" CopyToOutputDirectory="PreserveNewest" />
     <Compile Include="../../engines/unity/Runtime/CertaelNative.cs" Link="EngineAdapters/Unity/CertaelNative.cs" />
     <Compile Include="../../engines/unity/Runtime/CertaelClient.cs" Link="EngineAdapters/Unity/CertaelClient.cs" />
     <Compile Include="../../engines/unity/Runtime/CertaelAgentNative.cs" Link="EngineAdapters/Unity/CertaelAgentNative.cs" />

@@ -3,8 +3,23 @@ using Npgsql;
 
 namespace Certael.Persistence.Postgres;
 
-public sealed class PostgresAgentSessionStore(NpgsqlDataSource dataSource) : IAgentSessionStore
+public sealed class PostgresAgentSessionStore : IAgentSessionStore
 {
+    private readonly NpgsqlDataSource _dataSource;
+    private readonly TimeSpan _rawReportRetention;
+
+    public PostgresAgentSessionStore(NpgsqlDataSource dataSource)
+        : this(dataSource, TimeSpan.FromHours(24)) { }
+
+    public PostgresAgentSessionStore(NpgsqlDataSource dataSource, TimeSpan rawReportRetention)
+    {
+        if (rawReportRetention < TimeSpan.FromMinutes(1)
+            || rawReportRetention > TimeSpan.FromHours(24))
+            throw new ArgumentOutOfRangeException(nameof(rawReportRetention));
+        _dataSource = dataSource;
+        _rawReportRetention = rawReportRetention;
+    }
+
     public async ValueTask CreateAsync(VerifiedAgentSession session, CancellationToken cancellationToken)
     {
         const string sql = """
@@ -13,7 +28,7 @@ public sealed class PostgresAgentSessionStore(NpgsqlDataSource dataSource) : IAg
               last_sequence, last_report_digest, expires_at, authoritative_server_id)
             VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
             """;
-        await using NpgsqlConnection connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        await using NpgsqlConnection connection = await _dataSource.OpenConnectionAsync(cancellationToken);
         await using NpgsqlTransaction transaction = await connection.BeginTransactionAsync(cancellationToken);
         await SetTenant(connection, transaction, session.TenantId, cancellationToken);
         await using var command = new NpgsqlCommand(sql, connection, transaction);
@@ -43,7 +58,7 @@ public sealed class PostgresAgentSessionStore(NpgsqlDataSource dataSource) : IAg
             FROM certael_agent_sessions
             WHERE tenant_id=$1 AND agent_session_id=$2 AND revoked_at IS NULL
             """;
-        await using NpgsqlConnection connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        await using NpgsqlConnection connection = await _dataSource.OpenConnectionAsync(cancellationToken);
         await using NpgsqlTransaction transaction = await connection.BeginTransactionAsync(cancellationToken);
         await SetTenant(connection, transaction, tenantId, cancellationToken);
         await using var command = new NpgsqlCommand(sql, connection, transaction);
@@ -71,7 +86,7 @@ public sealed class PostgresAgentSessionStore(NpgsqlDataSource dataSource) : IAg
             WHERE tenant_id=$1 AND agent_session_id=$2 AND revoked_at IS NULL
               AND challenge IS NOT NULL AND challenge_expires_at IS NOT NULL
             """;
-        await using NpgsqlConnection connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        await using NpgsqlConnection connection = await _dataSource.OpenConnectionAsync(cancellationToken);
         await using NpgsqlTransaction transaction = await connection.BeginTransactionAsync(cancellationToken);
         await SetTenant(connection, transaction, tenantId, cancellationToken);
         await using var command = new NpgsqlCommand(sql, connection, transaction);
@@ -98,7 +113,7 @@ public sealed class PostgresAgentSessionStore(NpgsqlDataSource dataSource) : IAg
               last_report_at, revoked_at
             FROM certael_agent_sessions WHERE tenant_id=$1 AND agent_session_id=$2
             """;
-        await using NpgsqlConnection connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        await using NpgsqlConnection connection = await _dataSource.OpenConnectionAsync(cancellationToken);
         await using NpgsqlTransaction transaction = await connection.BeginTransactionAsync(cancellationToken);
         await SetTenant(connection, transaction, tenantId, cancellationToken);
         await using var command = new NpgsqlCommand(sql, connection, transaction);
@@ -145,12 +160,20 @@ public sealed class PostgresAgentSessionStore(NpgsqlDataSource dataSource) : IAg
             """;
         const string insert = """
             INSERT INTO certael_agent_reports(tenant_id, agent_session_id, sequence,
-              report_digest, canonical_report, observed_at, accepted_at)
-            VALUES($1,$2,$3,$4,$5,$6,$7)
+              report_digest, canonical_report, observed_at, accepted_at, expires_at)
+            VALUES($1,$2,$3,$4,$5,$6,$7,$8)
             """;
-        await using NpgsqlConnection connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        await using NpgsqlConnection connection = await _dataSource.OpenConnectionAsync(cancellationToken);
         await using NpgsqlTransaction transaction = await connection.BeginTransactionAsync(cancellationToken);
         await SetTenant(connection, transaction, tenantId, cancellationToken);
+        await using (var purge = new NpgsqlCommand(
+            "DELETE FROM certael_agent_reports WHERE tenant_id=$1 AND expires_at <= $2",
+            connection, transaction))
+        {
+            purge.Parameters.AddWithValue(tenantId);
+            purge.Parameters.AddWithValue(acceptedAt);
+            await purge.ExecuteNonQueryAsync(cancellationToken);
+        }
         await using (var command = new NpgsqlCommand(advance, connection, transaction))
         {
             command.Parameters.AddWithValue(tenantId);
@@ -172,6 +195,7 @@ public sealed class PostgresAgentSessionStore(NpgsqlDataSource dataSource) : IAg
             command.Parameters.AddWithValue(canonicalReport);
             command.Parameters.AddWithValue(DateTimeOffset.FromUnixTimeSeconds(report.ObservedAtUnix));
             command.Parameters.AddWithValue(acceptedAt);
+            command.Parameters.AddWithValue(acceptedAt.Add(_rawReportRetention));
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
         await transaction.CommitAsync(cancellationToken);
@@ -192,10 +216,51 @@ public sealed class PostgresAgentSessionStore(NpgsqlDataSource dataSource) : IAg
             tenantId, agentSessionId, revokedAt, reason);
     }
 
+    public async ValueTask<AgentPlayerDeletionResult> DeletePlayerAsync(string tenantId,
+        string environmentId, string playerSubject, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(tenantId) || string.IsNullOrWhiteSpace(environmentId)
+            || string.IsNullOrWhiteSpace(playerSubject) || tenantId.Length > 128
+            || environmentId.Length > 128 || playerSubject.Length > 128)
+            throw new ArgumentException("Tenant, environment, and player subject are invalid.");
+        await using NpgsqlConnection connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using NpgsqlTransaction transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await SetTenant(connection, transaction, tenantId, cancellationToken);
+        const string deleteReports = """
+            DELETE FROM certael_agent_reports reports
+            USING certael_agent_sessions sessions
+            WHERE reports.tenant_id=$1 AND sessions.tenant_id=$1
+              AND reports.agent_session_id=sessions.agent_session_id
+              AND sessions.environment_id=$2 AND sessions.player_subject=$3
+            """;
+        const string deleteSessions = """
+            DELETE FROM certael_agent_sessions
+            WHERE tenant_id=$1 AND environment_id=$2 AND player_subject=$3
+            """;
+        int reports;
+        await using (var command = new NpgsqlCommand(deleteReports, connection, transaction))
+        {
+            command.Parameters.AddWithValue(tenantId);
+            command.Parameters.AddWithValue(environmentId);
+            command.Parameters.AddWithValue(playerSubject);
+            reports = await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        int sessions;
+        await using (var command = new NpgsqlCommand(deleteSessions, connection, transaction))
+        {
+            command.Parameters.AddWithValue(tenantId);
+            command.Parameters.AddWithValue(environmentId);
+            command.Parameters.AddWithValue(playerSubject);
+            sessions = await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        await transaction.CommitAsync(cancellationToken);
+        return new AgentPlayerDeletionResult(sessions, reports);
+    }
+
     private async ValueTask<bool> ExecuteUpdate(string tenantId, string sql,
         CancellationToken cancellationToken, params object[] values)
     {
-        await using NpgsqlConnection connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        await using NpgsqlConnection connection = await _dataSource.OpenConnectionAsync(cancellationToken);
         await using NpgsqlTransaction transaction = await connection.BeginTransactionAsync(cancellationToken);
         await SetTenant(connection, transaction, tenantId, cancellationToken);
         await using var command = new NpgsqlCommand(sql, connection, transaction);

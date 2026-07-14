@@ -120,6 +120,27 @@ public sealed class InMemoryAgentSessionStore(TimeProvider clock) : IAgentSessio
         }
     }
 
+    public ValueTask<AgentPlayerDeletionResult> DeletePlayerAsync(string tenantId,
+        string environmentId, string playerSubject, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (string.IsNullOrWhiteSpace(tenantId) || string.IsNullOrWhiteSpace(environmentId)
+            || string.IsNullOrWhiteSpace(playerSubject))
+            throw new ArgumentException("Tenant, environment, and player subject are required.");
+        int removed = 0;
+        foreach ((string key, Entry entry) in _sessions)
+        {
+            if (!string.Equals(entry.Session.TenantId, tenantId, StringComparison.Ordinal)
+                || !string.Equals(entry.Session.EnvironmentId, environmentId,
+                    StringComparison.Ordinal)
+                || !string.Equals(entry.Session.PlayerSubject, playerSubject,
+                    StringComparison.Ordinal))
+                continue;
+            if (_sessions.TryRemove(key, out _)) removed++;
+        }
+        return ValueTask.FromResult(new AgentPlayerDeletionResult(removed, 0));
+    }
+
     private static string Key(string tenantId, string sessionId) => $"{tenantId.Length}:{tenantId}{sessionId}";
 
     private static VerifiedAgentSession Clone(VerifiedAgentSession value) => value with

@@ -35,8 +35,10 @@ fetch_godot_cpp() {
   if [[ ! -d "$path/.git" ]]; then
     git clone --filter=blob:none "$GODOT_CPP_REPOSITORY" "$path"
   fi
-  git -C "$path" fetch --depth 1 origin "$GODOT_CPP_COMMIT"
-  git -C "$path" checkout --detach "$GODOT_CPP_COMMIT"
+  if [[ "$(git -C "$path" rev-parse HEAD 2>/dev/null || true)" != "$GODOT_CPP_COMMIT" ]]; then
+    git -C "$path" fetch --depth 1 origin "$GODOT_CPP_COMMIT"
+    git -C "$path" checkout --detach "$GODOT_CPP_COMMIT"
+  fi
   [[ "$(git -C "$path" rev-parse HEAD)" == "$GODOT_CPP_COMMIT" ]] || { echo "godot-cpp pin mismatch" >&2; exit 3; }
 }
 

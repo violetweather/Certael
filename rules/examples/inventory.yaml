@@ -1,6 +1,7 @@
 apiVersion: certael.dev/v1
 kind: RulePack
 metadata:
+  tenantId: example-tenant
   id: example.inventory
   version: 1.0.0
   gameId: example

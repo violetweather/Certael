@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "product": "certael-core",
+  "product_version": "0.1.0",
+  "stability": "pre-1.0",
+  "core_c_abi_version": 1,
+  "action_protocol_version": 1,
+  "agent_protocol_version": 1,
+  "agent_probe_abi_version": 1,
+  "pinned_agent_source_commit": "15f9dbe78773fe9cda87b2f5bd210a2bd9a937a5",
+  "certified_engines": {
+    "godot": "4.7",
+    "unity": "6000.3.16f1",
+    "unreal": "5.8"
+  },
+  "certified_player_targets": [
+    "x86_64-pc-windows-msvc",
+    "x86_64-unknown-linux-gnu",
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin"
+  ]
+}

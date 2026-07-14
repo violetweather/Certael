@@ -31,7 +31,7 @@ public sealed class CertaelAgentHello
     }
 
     internal CertaelAgentHello Copy() => new(ProtocolVersion, AgentVersion,
-        AgentPublicKey.ToArray(), BuildId, ExecutableSha256.ToArray());
+        (byte[])AgentPublicKey.Clone(), BuildId, (byte[])ExecutableSha256.Clone());
 }
 
 /// <summary>Private inherited connection to the optional Certael Agent.</summary>
@@ -72,8 +72,8 @@ public sealed class CertaelAgentConnection : IDisposable
 
     public void BindAgentLaunchBundle(byte[] signedPolicy, byte[] signedGrant)
     {
-        ArgumentNullException.ThrowIfNull(signedPolicy);
-        ArgumentNullException.ThrowIfNull(signedGrant);
+        if (signedPolicy is null) throw new ArgumentNullException(nameof(signedPolicy));
+        if (signedGrant is null) throw new ArgumentNullException(nameof(signedGrant));
         if (_channel == IntPtr.Zero)
             throw new InvalidOperationException("Agent connection or launch grant is invalid.");
         byte[] grantBytes = AgentLaunchBundleCodec.Encode(signedPolicy, signedGrant);
@@ -96,8 +96,8 @@ public sealed class CertaelAgentConnection : IDisposable
     /// </summary>
     public byte[] ExchangeChallenge(byte[] canonicalChallenge)
     {
-        ArgumentNullException.ThrowIfNull(canonicalChallenge);
-        if (_channel == IntPtr.Zero || canonicalChallenge.Length is < 1 or > 64 * 1024)
+        if (canonicalChallenge is null) throw new ArgumentNullException(nameof(canonicalChallenge));
+        if (_channel == IntPtr.Zero || canonicalChallenge.Length is < 16 or > 256)
             throw new InvalidOperationException("Agent connection or challenge is invalid.");
         try
         {

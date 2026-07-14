@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text.Json;
 using Certael.Server.Rules;
+using NSec.Cryptography;
 
 return await CertaelCli.RunAsync(args, Console.Out, Console.Error);
 
@@ -17,6 +18,9 @@ internal static class CertaelCli
                     await SignRules(input, privateKey, keyId, destination, output),
                 ["manifest", "generate", string root, string destination] =>
                     await GenerateManifest(root, destination, output),
+                ["agent-key", "generate-development", string keyId, string privateKey,
+                    string trustStore] => await GenerateDevelopmentAgentKey(keyId, privateKey,
+                        trustStore, output),
                 ["doctor"] => await Doctor(output),
                 _ => Usage(error)
             };
@@ -89,6 +93,76 @@ internal static class CertaelCli
         return 0;
     }
 
+    private static async Task<int> GenerateDevelopmentAgentKey(string keyId,
+        string privateKeyPath, string trustStorePath, TextWriter output)
+    {
+        if (string.IsNullOrWhiteSpace(keyId) || keyId.Length > 128
+            || keyId.Any(character => !char.IsAsciiLetterOrDigit(character)
+                && character is not '.' and not '_' and not '-'))
+            throw new ArgumentException("Agent key ID is invalid.");
+        using Key key = Key.Create(SignatureAlgorithm.Ed25519,
+            new KeyCreationParameters { ExportPolicy = KeyExportPolicies.AllowPlaintextExport });
+        byte[] privateKey = key.Export(KeyBlobFormat.RawPrivateKey);
+        byte[] publicKey = key.PublicKey.Export(KeyBlobFormat.RawPublicKey);
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        var trustStore = new
+        {
+            keys = new[]
+            {
+                new
+                {
+                    key_id = keyId,
+                    public_key_hex = Convert.ToHexString(publicKey).ToLowerInvariant(),
+                    not_before_unix = now.AddMinutes(-5).ToUnixTimeSeconds(),
+                    not_after_unix = now.AddDays(30).ToUnixTimeSeconds(),
+                    revoked = false
+                }
+            }
+        };
+        try
+        {
+            await WriteExclusive(privateKeyPath, privateKey, privateMaterial: true);
+            try
+            {
+                await WriteExclusive(trustStorePath, JsonSerializer.SerializeToUtf8Bytes(
+                    trustStore, new JsonSerializerOptions { WriteIndented = true }),
+                    privateMaterial: false);
+            }
+            catch
+            {
+                File.Delete(Path.GetFullPath(privateKeyPath));
+                throw;
+            }
+        }
+        finally { CryptographicOperations.ZeroMemory(privateKey); }
+        await output.WriteLineAsync("generated development-only Agent keypair");
+        await output.WriteLineAsync($"private key: {Path.GetFullPath(privateKeyPath)}");
+        await output.WriteLineAsync($"public trust store: {Path.GetFullPath(trustStorePath)}");
+        await output.WriteLineAsync("production must use an HSM/KMS signing provider");
+        return 0;
+    }
+
+    private static async Task WriteExclusive(string path, byte[] content, bool privateMaterial)
+    {
+        string full = Path.GetFullPath(path);
+        Directory.CreateDirectory(Path.GetDirectoryName(full)!);
+        var options = new FileStreamOptions
+        {
+            Mode = FileMode.CreateNew,
+            Access = FileAccess.Write,
+            Share = FileShare.None,
+            Options = FileOptions.WriteThrough
+        };
+        if (!OperatingSystem.IsWindows())
+            options.UnixCreateMode = privateMaterial
+                ? UnixFileMode.UserRead | UnixFileMode.UserWrite
+                : UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead
+                    | UnixFileMode.OtherRead;
+        await using var stream = new FileStream(full, options);
+        await stream.WriteAsync(content);
+        await stream.FlushAsync();
+    }
+
     private static async Task WriteAtomic(string path, byte[] content)
     {
         string full = Path.GetFullPath(path);
@@ -107,6 +181,7 @@ internal static class CertaelCli
         error.WriteLine("usage: certaelctl rules validate <pack.yaml>");
         error.WriteLine("       certaelctl rules sign <pack.yaml> <private.pem> <key-id> <output.json>");
         error.WriteLine("       certaelctl manifest generate <root> <output.json>");
+        error.WriteLine("       certaelctl agent-key generate-development <key-id> <private.key> <trust-store.json>");
         error.WriteLine("       certaelctl doctor");
         return 1;
     }

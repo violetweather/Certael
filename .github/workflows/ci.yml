@@ -28,13 +28,15 @@ jobs:
       - name: Rust format
         run: cargo fmt --all --check
       - name: Rust lint
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Rust tests and native library
-        run: cargo test --workspace --release
+        run: cargo test --workspace --release --locked
       - name: Build native library
-        run: cargo build --release -p certael-c-api
+        run: cargo build --release --locked -p certael-c-api
       - name: .NET build and tests
         run: dotnet test Certael.slnx -c Release --warnaserror
+      - name: Unity .NET Standard compatibility
+        run: dotnet build engines/unity/Runtime/Certael.Unity.csproj -c Release --warnaserror
       - name: C ABI smoke (Unix)
         if: runner.os != 'Windows'
         shell: bash
@@ -157,3 +159,14 @@ jobs:
           cargo audit
       - name: NuGet vulnerability audit
         run: dotnet list Certael.slnx package --vulnerable --include-transitive
+
+  sbom:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with: { persist-credentials: false }
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
+        with: { toolchain: 1.97.0 }
+      - run: cargo install cargo-cyclonedx --version 0.5.9 --locked
+      - run: bash scripts/package-cyclonedx-sbom.sh /tmp/certael-rust-sbom-ci.tar.gz
+      - run: tar -tzf /tmp/certael-rust-sbom-ci.tar.gz

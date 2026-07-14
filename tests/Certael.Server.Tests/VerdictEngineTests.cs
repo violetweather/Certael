@@ -56,13 +56,23 @@ public sealed class VerdictEngineTests
         Finding finding = FindingOf(SignalFamily.EconomyAnomaly, FindingTrust.Authoritative, 60);
         Verdict verdict = engine.Evaluate([finding]);
         EvidenceBundle bundle = EvidenceReplay.Create(verdict, [finding]);
+        Finding otherFinding = finding with
+        {
+            FindingId = Guid.NewGuid(),
+            EnvironmentId = "staging",
+            SessionId = "other-session"
+        };
+        Verdict otherVerdict = engine.Evaluate([otherFinding]);
+        EvidenceBundle otherBundle = EvidenceReplay.Create(otherVerdict, [otherFinding]);
         var store = new InMemoryEvidenceStore();
         await store.SaveAsync(bundle, token);
+        await store.SaveAsync(otherBundle, token);
 
         Assert.Null(await store.FindAsync("other-tenant", verdict.VerdictId, token));
         Assert.NotNull(await store.FindAsync("tenant", verdict.VerdictId, token));
-        await store.DeletePlayerAsync("tenant", "player", token);
+        await store.DeletePlayerAsync("tenant", "prod", "player", token);
         Assert.Null(await store.FindAsync("tenant", verdict.VerdictId, token));
+        Assert.NotNull(await store.FindAsync("tenant", otherVerdict.VerdictId, token));
     }
 
     private static Finding FindingOf(SignalFamily family, FindingTrust trust, int risk) =>

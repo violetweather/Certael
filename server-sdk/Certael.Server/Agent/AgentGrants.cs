@@ -7,7 +7,7 @@ namespace Certael.Server.Agent;
 public enum AgentRequirementMode { Disabled = 0, Optional = 1, Required = 2 }
 
 public sealed record AgentPolicyClaims(
-    uint ProtocolVersion, string PolicyId, string GameId, string EnvironmentId,
+    uint ProtocolVersion, string PolicyId, string TenantId, string GameId, string EnvironmentId,
     AgentRequirementMode RequirementMode, uint HeartbeatSeconds, uint ReportSeconds,
     uint DisconnectGraceSeconds, string MinimumAgentVersion, DateTimeOffset ExpiresAt);
 
@@ -21,16 +21,45 @@ public sealed record AgentLaunchGrantClaims(
 
 public sealed record SignedAgentLaunchGrant(byte[] Claims, byte[] Signature, string KeyId);
 
-public sealed class AgentGrantSigner(Key signingKey, string keyId)
+public sealed record AgentGrantSignature(string KeyId, byte[] Signature);
+
+/// <summary>
+/// Production implementations delegate Ed25519 signing to an HSM, KMS, or
+/// isolated signing service. Private key bytes need not enter the API process.
+/// </summary>
+public interface IAgentGrantSigningProvider
+{
+    AgentGrantSignature Sign(ReadOnlyMemory<byte> domainSeparatedClaims, DateTimeOffset now);
+}
+
+public sealed class LocalAgentGrantSigningProvider(Key signingKey, string keyId)
+    : IAgentGrantSigningProvider
+{
+    public AgentGrantSignature Sign(ReadOnlyMemory<byte> domainSeparatedClaims,
+        DateTimeOffset now) => new(keyId,
+            SignatureAlgorithm.Ed25519.Sign(signingKey, domainSeparatedClaims.Span));
+
+    public byte[] ExportPublicKey() => signingKey.PublicKey.Export(KeyBlobFormat.RawPublicKey);
+}
+
+public sealed class AgentGrantSigner
 {
     private static readonly byte[] PolicyDomain = "certael.agent.policy.v1\0"u8.ToArray();
     private static readonly byte[] LaunchDomain = "certael.agent.launch.v1\0"u8.ToArray();
+    private readonly IAgentGrantSigningProvider _provider;
+
+    public AgentGrantSigner(Key signingKey, string keyId)
+        : this(new LocalAgentGrantSigningProvider(signingKey, keyId)) { }
+
+    public AgentGrantSigner(IAgentGrantSigningProvider provider) =>
+        _provider = provider ?? throw new ArgumentNullException(nameof(provider));
 
     public SignedAgentPolicy IssuePolicy(AgentPolicyClaims claims, DateTimeOffset now)
     {
         ValidatePolicy(claims, now);
         byte[] encoded = AgentGrantCodec.EncodePolicyClaims(claims);
-        return new(encoded, Sign(PolicyDomain, encoded), KeyId());
+        AgentGrantSignature signature = Sign(PolicyDomain, encoded, now);
+        return new(encoded, signature.Signature, signature.KeyId);
     }
 
     public SignedAgentLaunchGrant IssueLaunchGrant(AgentLaunchGrantClaims claims,
@@ -38,24 +67,27 @@ public sealed class AgentGrantSigner(Key signingKey, string keyId)
     {
         ValidateGrant(claims, now);
         byte[] encoded = AgentGrantCodec.EncodeLaunchGrantClaims(claims);
-        return new(encoded, Sign(LaunchDomain, encoded), KeyId());
+        AgentGrantSignature signature = Sign(LaunchDomain, encoded, now);
+        return new(encoded, signature.Signature, signature.KeyId);
     }
 
-    public byte[] ExportPublicKey() => signingKey.PublicKey.Export(KeyBlobFormat.RawPublicKey);
-
-    private byte[] Sign(byte[] domain, byte[] encoded) => SignatureAlgorithm.Ed25519.Sign(
-        signingKey, domain.Concat(encoded).ToArray());
-
-    private string KeyId()
+    private AgentGrantSignature Sign(byte[] domain, byte[] encoded, DateTimeOffset now)
     {
-        if (string.IsNullOrWhiteSpace(keyId) || keyId.Length > 128)
-            throw new InvalidOperationException("Agent signing key ID is invalid.");
-        return keyId;
+        byte[] message = new byte[domain.Length + encoded.Length];
+        domain.CopyTo(message, 0);
+        encoded.CopyTo(message, domain.Length);
+        AgentGrantSignature result = _provider.Sign(message, now);
+        CryptographicOperations.ZeroMemory(message);
+        if (string.IsNullOrWhiteSpace(result.KeyId) || result.KeyId.Length > 128
+            || result.Signature.Length != 64)
+            throw new CryptographicException("Agent signing provider returned invalid metadata.");
+        return result with { Signature = result.Signature.ToArray() };
     }
 
     private static void ValidatePolicy(AgentPolicyClaims claims, DateTimeOffset now)
     {
         if (claims.ProtocolVersion != 1 || !Identifier(claims.PolicyId)
+            || !Identifier(claims.TenantId)
             || !Identifier(claims.GameId) || !Identifier(claims.EnvironmentId)
             || !Enum.IsDefined(claims.RequirementMode)
             || claims.HeartbeatSeconds is < 5 or > 300
@@ -104,6 +136,7 @@ public static class AgentGrantCodec
         VarintField(stream, 8, value.DisconnectGraceSeconds);
         String(stream, 9, value.MinimumAgentVersion);
         VarintField(stream, 10, checked((ulong)value.ExpiresAt.ToUnixTimeSeconds()));
+        String(stream, 11, value.TenantId);
         return stream.ToArray();
     }
 

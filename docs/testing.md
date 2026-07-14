@@ -1,5 +1,9 @@
 # Verification guide
 
+Run `./scripts/verify-local.sh` for the complete local Rust/.NET suite. When
+Docker is available it also creates disposable PostgreSQL 17 and Redis 8
+instances, runs the real persistence/RLS/concurrency tests, and removes them.
+
 ## Fast local checks
 
 ```bash
@@ -26,12 +30,13 @@ not satisfy the distributed 100,000-player acceptance gate. Production evidence
 must also include PostgreSQL, Redis, API replicas, network latency, failover,
 30-minute sustained load, a 2x burst, and a 24-hour soak with published topology.
 
-Partial local result (not an acceptance result): on 2026-07-12 an Apple M4 with
-16 GiB RAM running macOS 15.7.7 processed one signed/verified action for each of
-100,000 generated sessions in 10.71 seconds (9,339 actions/second). This run had
-no network, API replicas, PostgreSQL, Redis, game callbacks, sustained window,
-burst, failover, or soak, so the 100,000-session/25,000-admission production gate
-remains **not verified**.
+Latest local result (not a production acceptance result): on 2026-07-13 an Apple
+M4 with 16 GiB RAM processed ten signed/verified actions for each of 100,000
+generated sessions: 1,000,000 actions in 33.212864 seconds (30,108.82 actions per
+second). The machine-readable observation is in
+`benchmarks/local-protocol-2026-07-13.json`. This run had no network, API replicas,
+PostgreSQL, Redis, game callbacks, sustained window, burst, failover, or soak, so
+the distributed production gate remains **not verified**.
 
 ## Persistence integration
 

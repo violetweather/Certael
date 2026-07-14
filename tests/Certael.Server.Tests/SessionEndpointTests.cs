@@ -48,4 +48,16 @@ public sealed class SessionEndpointTests : IClassFixture<WebApplicationFactory<P
         Assert.Equal("match", session.MatchId);
         Assert.Equal("build", session.BuildId);
     }
+
+    [Fact]
+    public async Task PrivacyDeletionRequiresAdministrativeWorkloadIdentity()
+    {
+        using HttpClient client = _factory.CreateClient(
+            new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        using HttpResponseMessage response = await client.PostAsJsonAsync(
+            "/v1/admin/privacy/delete-player",
+            new PlayerDeletionRequest("tenant", "test", "player", "privacy request"),
+            TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
 }

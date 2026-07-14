@@ -37,24 +37,45 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with: { persist-credentials: false }
+      - name: Check out pinned Certael Agent probe source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          repository: violetweather/Certael-Agent
+          ref: 15f9dbe78773fe9cda87b2f5bd210a2bd9a937a5
+          path: certael-agent-source
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
         with:
           toolchain: 1.97.0
           targets: ${{ matrix.target }}
       - run: cargo build --locked --release -p certael-c-api --target ${{ matrix.target }}
+      - name: Build pinned Agent probe
+        run: cargo build --locked --release --manifest-path certael-agent-source/Cargo.toml -p certael-agent-probe --target ${{ matrix.target }}
       - name: Assemble native package
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p "artifacts/certael-native-${{ matrix.artifact }}/include" "artifacts/certael-native-${{ matrix.artifact }}/lib"
           cp runtime/certael-c-api/include/certael.h runtime/certael-c-api/include/certael.hpp "artifacts/certael-native-${{ matrix.artifact }}/include/"
+          cp certael-agent-source/include/certael_agent_probe.h "artifacts/certael-native-${{ matrix.artifact }}/include/"
           cp LICENSE "artifacts/certael-native-${{ matrix.artifact }}/LICENSE"
+          cp certael-agent-source/LICENSE "artifacts/certael-native-${{ matrix.artifact }}/CERTAEL_AGENT_LICENSE"
           printf '%s\n' "$GITHUB_SHA" > "artifacts/certael-native-${{ matrix.artifact }}/SOURCE_COMMIT"
+          printf '%s\n' '15f9dbe78773fe9cda87b2f5bd210a2bd9a937a5' > "artifacts/certael-native-${{ matrix.artifact }}/AGENT_SOURCE_COMMIT"
+          cp compatibility/core-agent-v1.json "artifacts/certael-native-${{ matrix.artifact }}/"
           cp "target/${{ matrix.target }}/release/${{ matrix.library }}" "artifacts/certael-native-${{ matrix.artifact }}/lib/"
           if [[ "${{ runner.os }}" == "Windows" ]]; then
             find "target/${{ matrix.target }}/release" -maxdepth 1 -name '*.lib' -exec cp {} "artifacts/certael-native-${{ matrix.artifact }}/lib/" \;
+            cp "certael-agent-source/target/${{ matrix.target }}/release/certael_agent_probe.dll" "artifacts/certael-native-${{ matrix.artifact }}/lib/"
+            find "certael-agent-source/target/${{ matrix.target }}/release" -maxdepth 1 -name '*.lib' -exec cp {} "artifacts/certael-native-${{ matrix.artifact }}/lib/" \;
           else
             cp "target/${{ matrix.target }}/release/libcertael_c_api.a" "artifacts/certael-native-${{ matrix.artifact }}/lib/"
+            cp "certael-agent-source/target/${{ matrix.target }}/release/libcertael_agent_probe.a" "artifacts/certael-native-${{ matrix.artifact }}/lib/"
+            if [[ "${{ runner.os }}" == "Linux" ]]; then
+              cp "certael-agent-source/target/${{ matrix.target }}/release/libcertael_agent_probe.so" "artifacts/certael-native-${{ matrix.artifact }}/lib/"
+            else
+              cp "certael-agent-source/target/${{ matrix.target }}/release/libcertael_agent_probe.dylib" "artifacts/certael-native-${{ matrix.artifact }}/lib/"
+            fi
           fi
       - uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661
         with: { subject-path: "artifacts/certael-native-${{ matrix.artifact }}/**" }
@@ -267,6 +288,8 @@ jobs:
           pattern: certael-*
           path: downloaded
           merge-multiple: false
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
+        with: { toolchain: 1.97.0 }
       - name: Assemble engine SDKs
         run: |
           set -euo pipefail
@@ -275,6 +298,9 @@ jobs:
           cp LICENSE staging/godot/LICENSE
           cp LICENSE staging/unity/LICENSE
           cp LICENSE staging/unreal/LICENSE
+          cp compatibility/core-agent-v1.json staging/godot/compatibility-v1.json
+          cp compatibility/core-agent-v1.json staging/unity/compatibility-v1.json
+          cp compatibility/core-agent-v1.json staging/unreal/compatibility-v1.json
           printf '%s\n' "$GITHUB_SHA" | tee staging/godot/SOURCE_COMMIT staging/unity/SOURCE_COMMIT staging/unreal/SOURCE_COMMIT >/dev/null
           cp -R engines/godot/addons/certael staging/godot/addons/
           mkdir -p staging/godot/addons/certael/bin
@@ -282,15 +308,25 @@ jobs:
           cp -R engines/unity/. staging/unity/
           mkdir -p staging/unity/Runtime/Plugins/{Windows,Linux} staging/unity/Runtime/Plugins/macOS/{arm64,x86_64}
           cp downloaded/certael-native-windows-x86_64/lib/certael_c_api.dll staging/unity/Runtime/Plugins/Windows/
+          cp downloaded/certael-native-windows-x86_64/lib/certael_agent_probe.dll staging/unity/Runtime/Plugins/Windows/
           cp downloaded/certael-native-linux-x86_64/lib/libcertael_c_api.so staging/unity/Runtime/Plugins/Linux/
+          cp downloaded/certael-native-linux-x86_64/lib/libcertael_agent_probe.so staging/unity/Runtime/Plugins/Linux/
           cp downloaded/certael-native-macos-arm64/lib/libcertael_c_api.dylib staging/unity/Runtime/Plugins/macOS/arm64/
+          cp downloaded/certael-native-macos-arm64/lib/libcertael_agent_probe.dylib staging/unity/Runtime/Plugins/macOS/arm64/
           cp downloaded/certael-native-macos-x86_64/lib/libcertael_c_api.dylib staging/unity/Runtime/Plugins/macOS/x86_64/
+          cp downloaded/certael-native-macos-x86_64/lib/libcertael_agent_probe.dylib staging/unity/Runtime/Plugins/macOS/x86_64/
+          cp downloaded/certael-native-linux-x86_64/CERTAEL_AGENT_LICENSE staging/unity/CERTAEL_AGENT_LICENSE
+          cp downloaded/certael-native-linux-x86_64/AGENT_SOURCE_COMMIT staging/unity/AGENT_SOURCE_COMMIT
           cp -R engines/unreal/Certael/. staging/unreal/
-          mkdir -p staging/unreal/Native/{include,Win64,Linux} staging/unreal/Binaries/Win64
-          cp runtime/certael-c-api/include/* staging/unreal/Native/include/
+          mkdir -p staging/unreal/Native/{include,Win64,Linux} staging/unreal/Native/Mac/{arm64,x86_64} staging/unreal/Binaries/Win64
+          cp downloaded/certael-native-linux-x86_64/include/* staging/unreal/Native/include/
           cp downloaded/certael-native-windows-x86_64/lib/* staging/unreal/Native/Win64/
           cp downloaded/certael-native-windows-x86_64/lib/certael_c_api.dll staging/unreal/Binaries/Win64/
           cp downloaded/certael-native-linux-x86_64/lib/* staging/unreal/Native/Linux/
+          cp downloaded/certael-native-macos-arm64/lib/*.a staging/unreal/Native/Mac/arm64/
+          cp downloaded/certael-native-macos-x86_64/lib/*.a staging/unreal/Native/Mac/x86_64/
+          cp downloaded/certael-native-linux-x86_64/CERTAEL_AGENT_LICENSE staging/unreal/CERTAEL_AGENT_LICENSE
+          cp downloaded/certael-native-linux-x86_64/AGENT_SOURCE_COMMIT staging/unreal/AGENT_SOURCE_COMMIT
           mkdir -p release
           (cd staging/godot && zip -qr "../../release/certael-godot-4.7-${GITHUB_REF_NAME}.zip" .)
           (cd staging/unity && tar -czf "../../release/certael-unity-6000.3-${GITHUB_REF_NAME}.tgz" .)
@@ -298,6 +334,8 @@ jobs:
       - name: Archive and checksum
         run: |
           set -euo pipefail
+          cargo install cargo-cyclonedx --version 0.5.9 --locked
+          bash scripts/package-cyclonedx-sbom.sh "release/certael-rust-sbom-${GITHUB_REF_NAME}.tar.gz"
           for directory in downloaded/*; do
             name="$(basename "$directory")"
             tar -C "$directory" -czf "release/${name}-${GITHUB_REF_NAME}.tar.gz" .

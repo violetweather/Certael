@@ -42,7 +42,8 @@ void CertaelNative::_bind_methods() {
 PackedByteArray CertaelNative::sign_redemption(
     const PackedByteArray& ticket_id, const PackedByteArray& challenge) const {
     PackedByteArray result;
-    if (runtime_ == nullptr || ticket_id.size() != 16) return result;
+    if (runtime_ == nullptr || ticket_id.size() != 16
+        || challenge.size() < 16 || challenge.size() > 256) return result;
     result.resize(64);
     if (certael_client_sign_redemption(runtime_, ticket_id.ptr(), 16,
         challenge.ptr(), static_cast<size_t>(challenge.size()), result.ptrw(), 64) != CERTAEL_OK)
@@ -275,8 +276,7 @@ bool CertaelNative::agent_bind_launch_bundle(const PackedByteArray& signed_polic
 PackedByteArray CertaelNative::agent_exchange_challenge(const PackedByteArray& challenge) {
     const std::lock_guard<std::mutex> lock(agent_channel_mutex_);
     PackedByteArray report;
-    if (agent_channel_ == nullptr || challenge.is_empty()
-        || challenge.size() > static_cast<int64_t>(certael::agent::kMaximumFrameSize)) {
+    if (agent_channel_ == nullptr || challenge.size() < 16 || challenge.size() > 256) {
         agent_error_ = "AGENT_CHALLENGE_INVALID";
         return report;
     }
@@ -357,9 +357,21 @@ bool CertaelNative::activate_session(const Dictionary& binding) {
 PackedByteArray CertaelNative::authorize_action(
     const String& type, const String& schema_id, int64_t schema, const PackedByteArray& payload) {
     PackedByteArray result;
-    if (runtime_ == nullptr || schema < 0 || schema > UINT32_MAX) return result;
+    if (runtime_ == nullptr || schema <= 0 || schema > UINT32_MAX
+        || payload.size() > 64 * 1024) return result;
     CharString action_type = type.utf8();
     CharString request_schema = schema_id.utf8();
+    const auto valid_identifier = [](const CharString& value) {
+        if (value.length() <= 0 || value.length() > 128) return false;
+        for (int64_t index = 0; index < value.length(); ++index) {
+            const uint8_t byte = static_cast<uint8_t>(value[index]);
+            if (!((byte >= 'a' && byte <= 'z') || (byte >= 'A' && byte <= 'Z')
+                || (byte >= '0' && byte <= '9') || byte == '.' || byte == '_'
+                || byte == '-')) return false;
+        }
+        return true;
+    };
+    if (!valid_identifier(action_type) || !valid_identifier(request_schema)) return result;
     result.resize(payload.size() + 2048);
     size_t written = 0;
     certael_action_request_v1 request {

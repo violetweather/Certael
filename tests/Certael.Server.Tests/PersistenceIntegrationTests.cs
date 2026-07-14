@@ -5,6 +5,9 @@ using Certael.Server.Actions;
 using Certael.Server.Evidence;
 using Certael.Server.Sessions;
 using Certael.Server.Agent;
+using Certael.Server.Configuration;
+using Certael.Server.Protections;
+using Certael.Server.Rules;
 using Npgsql;
 using StackExchange.Redis;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -31,6 +34,18 @@ public sealed class PersistenceIntegrationTests
         await using NpgsqlDataSource dataSource = NpgsqlDataSource.Create(connectionString);
         await new PostgresMigrationRunner(dataSource).ApplyAsync(token);
         await ResetPostgres(dataSource, token);
+
+        var durableTickets = new PostgresTicketRedemptionStore(dataSource);
+        Assert.False(await durableTickets.TryRedeemAsync("tenant/escape", "test",
+            Guid.NewGuid(), DateTimeOffset.UtcNow.AddMinutes(1), token));
+        Guid durableTicket = Guid.NewGuid();
+        DateTimeOffset durableTicketExpiry = DateTimeOffset.UtcNow.AddMinutes(1);
+        bool[] ticketRedemptions = await Task.WhenAll(Enumerable.Range(0, 16).Select(_ =>
+            durableTickets.TryRedeemAsync("tenant-a", "test", durableTicket,
+                durableTicketExpiry, token).AsTask()));
+        Assert.Equal(1, ticketRedemptions.Count(value => value));
+        Assert.True(await durableTickets.TryRedeemAsync("tenant-b", "test", durableTicket,
+            durableTicketExpiry, token));
 
         var session = new SessionAuthorization("session-a", "tenant-a", "game", "test", "player", "match",
             "server", "build", DateTimeOffset.UtcNow.AddMinutes(30), 1, 1000, new byte[32]);
@@ -72,12 +87,95 @@ public sealed class PersistenceIntegrationTests
             new byte[32], new byte[64]);
         byte[] canonicalAgentReport = AgentReportCodec.Encode(agentReport);
         byte[] agentDigest = AgentReportCodec.Digest(agentReport);
+        DateTimeOffset agentAcceptedAt = DateTimeOffset.UtcNow;
         bool[] agentCommits = await Task.WhenAll(Enumerable.Range(0, 8).Select(_ =>
             agentStore.CommitReportAsync("tenant-a", agentReport, canonicalAgentReport,
-                agentDigest, DateTimeOffset.UtcNow, token).AsTask()));
+                agentDigest, agentAcceptedAt, token).AsTask()));
         Assert.Equal(1, agentCommits.Count(value => value));
         AgentStoredHealth? reportedHealth = await agentStore.HealthAsync("tenant-a", "agent-a", token);
         Assert.NotNull(reportedHealth?.LastReportAt);
+        await using (NpgsqlCommand retention = dataSource.CreateCommand(
+            "SELECT expires_at FROM certael_agent_reports WHERE tenant_id='tenant-a' " +
+            "AND agent_session_id='agent-a' AND sequence=1"))
+        {
+            object value = (await retention.ExecuteScalarAsync(token))!;
+            DateTimeOffset expiresAt = value is DateTime timestamp
+                ? new DateTimeOffset(DateTime.SpecifyKind(timestamp, DateTimeKind.Utc))
+                : (DateTimeOffset)value;
+            Assert.InRange(expiresAt, agentAcceptedAt.AddHours(24).AddSeconds(-1),
+                agentAcceptedAt.AddHours(24).AddSeconds(1));
+        }
+
+        using Key policyKey = Key.Create(SignatureAlgorithm.Ed25519);
+        var policyStore = new PostgresAgentPolicyStore(dataSource,
+            new AgentGrantSigner(policyKey, "agent-policy-key"), TimeProvider.System);
+        DateTimeOffset policyExpiry = DateTimeOffset.UtcNow.AddHours(1);
+        var policyClaims = new AgentPolicyClaims(1, "competitive-default", "tenant-a",
+            "game", "test", AgentRequirementMode.Required, 15, 60, 30, "0.1.0",
+            policyExpiry);
+        await policyStore.AddDraftAsync(policyClaims, "author", token);
+        await policyStore.ApproveAsync("tenant-a", policyClaims.PolicyId, "reviewer-a", token);
+        await policyStore.ApproveAsync("tenant-a", policyClaims.PolicyId, "reviewer-b", token);
+        AgentPolicyDeployment active = await policyStore.PromoteAsync("tenant-a",
+            policyClaims.PolicyId, AgentPolicyDeploymentStage.Enforced, 0, "operator", token);
+        Assert.Equal(2, active.Approvals.Count);
+        AgentPolicyClaims resolvedPolicy = (await policyStore.ResolveAsync(policyClaims.PolicyId,
+            "tenant-a", "game", "test", "player\0match", DateTimeOffset.UtcNow, token)).Claims;
+        Assert.Equal(policyClaims with { ExpiresAt = resolvedPolicy.ExpiresAt }, resolvedPolicy);
+        Assert.InRange((policyClaims.ExpiresAt - resolvedPolicy.ExpiresAt).Duration(),
+            TimeSpan.Zero, TimeSpan.FromMilliseconds(1));
+        await Assert.ThrowsAsync<AgentPolicyLifecycleException>(async () =>
+            await policyStore.GetAsync("tenant-b", policyClaims.PolicyId, token));
+
+        using ECDsa configurationKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        var configurationVerifier = new SignedConfigurationVerifier(
+            new RulePackVerifier(new Dictionary<string, ECDsa> { ["configuration-key"] = configurationKey }),
+            new ProtectionProfileVerifier(new Dictionary<string, ECDsa> { ["configuration-key"] = configurationKey }));
+        var configurationStore = new PostgresSignedConfigurationStore(dataSource,
+            configurationVerifier, TimeProvider.System);
+        var profileCompiler = new ProtectionProfileCompiler(configurationKey, "configuration-key");
+        ProtectionProfile Profile(string version) => new("tenant-a", "competitive", version,
+            "game", "test", new Dictionary<string, ProtectionActionPolicy>
+            {
+                ["inventory.craft"] = new("example.Craft.v1", 1, new(10, 10_000),
+                    ["economy", "revision"])
+            }, new(AdmissionUnavailableMode.Deny, RulesUnavailableMode.Indeterminate));
+        SignedConfigurationArtifact firstProfile = SignedConfigurationArtifact.From(
+            profileCompiler.CompileAndSign(Profile("1.0.0")));
+        SignedConfigurationArtifact secondProfile = SignedConfigurationArtifact.From(
+            profileCompiler.CompileAndSign(Profile("1.1.0")));
+        await configurationStore.AddDraftAsync(firstProfile, "author", token);
+        await configurationStore.AddDraftAsync(secondProfile, "author", token);
+        await configurationStore.ApproveAsync("tenant-a", firstProfile.Kind,
+            firstProfile.ArtifactId, firstProfile.Version, "reviewer-a", token);
+        await configurationStore.ApproveAsync("tenant-a", firstProfile.Kind,
+            firstProfile.ArtifactId, firstProfile.Version, "reviewer-b", token);
+        await configurationStore.PromoteAsync("tenant-a", firstProfile.Kind,
+            firstProfile.ArtifactId, firstProfile.Version, SignedConfigurationStage.Enforced,
+            0, "operator", token);
+        await configurationStore.ApproveAsync("tenant-a", secondProfile.Kind,
+            secondProfile.ArtifactId, secondProfile.Version, "reviewer-a", token);
+        await configurationStore.PromoteAsync("tenant-a", secondProfile.Kind,
+            secondProfile.ArtifactId, secondProfile.Version, SignedConfigurationStage.Canary,
+            10, "operator", token);
+        SignedConfigurationDeployment restored = await configurationStore.RollbackAsync(
+            "tenant-a", secondProfile.Kind, "game", "test", "operator", token);
+        Assert.Equal("1.0.0", restored.Artifact.Version);
+        await Assert.ThrowsAsync<SignedConfigurationException>(async () =>
+            await configurationStore.GetAsync("tenant-b", firstProfile.Kind,
+                firstProfile.ArtifactId, firstProfile.Version, token));
+
+        var buildRegistry = new PostgresAgentBuildRegistry(dataSource, TimeProvider.System);
+        await buildRegistry.RegisterAsync("tenant-a", "game", "test", "build-1",
+            "release-operator", token);
+        Assert.True(await buildRegistry.IsApprovedAsync("tenant-a", "game", "test",
+            "build-1", token));
+        Assert.False(await buildRegistry.IsApprovedAsync("tenant-b", "game", "test",
+            "build-1", token));
+        Assert.True(await buildRegistry.RevokeAsync("tenant-a", "game", "test", "build-1",
+            "release-operator", token));
+        Assert.False(await buildRegistry.IsApprovedAsync("tenant-a", "game", "test",
+            "build-1", token));
 
         await using NpgsqlConnection connection = await dataSource.OpenConnectionAsync(token);
         await using NpgsqlTransaction transaction = await connection.BeginTransactionAsync(token);
@@ -162,9 +260,14 @@ public sealed class PersistenceIntegrationTests
         await evidence.SaveAsync(bundle, token);
         Assert.NotNull(await evidence.FindAsync("tenant-a", verdict.VerdictId, token));
         Assert.Null(await evidence.FindAsync("tenant-b", verdict.VerdictId, token));
-        await evidence.DeletePlayerAsync("tenant-a", "player", token);
-        Assert.Null(await evidence.FindAsync("tenant-a", verdict.VerdictId, token));
         await AssertRestrictedRoleRls(dataSource, token);
+        AgentPlayerDeletionResult deletion = await agentStore.DeletePlayerAsync(
+            "tenant-a", "test", "player", token);
+        Assert.Equal(1, deletion.SessionsDeleted);
+        Assert.Equal(1, deletion.RawReportsDeleted);
+        Assert.Null(await agentStore.HealthAsync("tenant-a", "agent-a", token));
+        await evidence.DeletePlayerAsync("tenant-a", "test", "player", token);
+        Assert.Null(await evidence.FindAsync("tenant-a", verdict.VerdictId, token));
     }
 
     [Fact]
@@ -240,12 +343,22 @@ public sealed class PersistenceIntegrationTests
         Assert.NotNull(persisted);
         Assert.Equal("api-tenant", persisted.TenantId);
         Assert.Equal("api-match", persisted.MatchId);
+
+        using HttpResponseMessage configurationAdmin = await client.PostAsJsonAsync(
+            "/v1/admin/configurations/drafts", new SignedConfigurationDraftRequest(
+                SignedConfigurationKind.ProtectionProfile, "api-tenant", "profile", "1.0.0",
+                "game", "test", [1], new byte[32], new byte[64], "key", "test"), token);
+        Assert.Equal(HttpStatusCode.Unauthorized, configurationAdmin.StatusCode);
     }
 
     private static async Task ResetPostgres(NpgsqlDataSource source, CancellationToken token)
     {
         await using NpgsqlCommand command = source.CreateCommand(
-            "TRUNCATE certael_agent_reports, certael_agent_sessions, certael_action_results, " +
+            "TRUNCATE certael_agent_builds, certael_ticket_redemptions, " +
+            "certael_signed_configuration_active, certael_signed_configuration_approvals, " +
+            "certael_signed_configurations, " +
+            "certael_agent_policy_approvals, certael_agent_policies, " +
+            "certael_agent_reports, certael_agent_sessions, certael_action_results, " +
             "certael_outbox, certael_evidence, certael_sessions CASCADE");
         await command.ExecuteNonQueryAsync(token);
     }
@@ -262,6 +375,13 @@ public sealed class PersistenceIntegrationTests
             GRANT SELECT, UPDATE ON certael_sessions TO certael_rls_test;
             GRANT SELECT, UPDATE ON certael_agent_sessions TO certael_rls_test;
             GRANT SELECT ON certael_agent_reports TO certael_rls_test;
+            GRANT SELECT, INSERT, UPDATE ON certael_agent_policies TO certael_rls_test;
+            GRANT SELECT, INSERT, UPDATE ON certael_agent_policy_approvals TO certael_rls_test;
+            GRANT SELECT, INSERT, UPDATE ON certael_ticket_redemptions TO certael_rls_test;
+            GRANT SELECT, INSERT, UPDATE ON certael_agent_builds TO certael_rls_test;
+            GRANT SELECT, INSERT, UPDATE ON certael_signed_configurations TO certael_rls_test;
+            GRANT SELECT, INSERT, UPDATE ON certael_signed_configuration_approvals TO certael_rls_test;
+            GRANT SELECT, INSERT, UPDATE ON certael_signed_configuration_active TO certael_rls_test;
             """))
             await setup.ExecuteNonQueryAsync(token);
 
@@ -276,6 +396,14 @@ public sealed class PersistenceIntegrationTests
             Assert.Equal(1L, (long)(await read.ExecuteScalarAsync(token))!);
         await using (var read = new NpgsqlCommand("SELECT count(*) FROM certael_agent_sessions", connection, transaction))
             Assert.Equal(1L, (long)(await read.ExecuteScalarAsync(token))!);
+        await using (var read = new NpgsqlCommand("SELECT count(*) FROM certael_agent_policies", connection, transaction))
+            Assert.Equal(1L, (long)(await read.ExecuteScalarAsync(token))!);
+        await using (var read = new NpgsqlCommand("SELECT count(*) FROM certael_ticket_redemptions", connection, transaction))
+            Assert.Equal(1L, (long)(await read.ExecuteScalarAsync(token))!);
+        await using (var read = new NpgsqlCommand("SELECT count(*) FROM certael_agent_builds", connection, transaction))
+            Assert.Equal(1L, (long)(await read.ExecuteScalarAsync(token))!);
+        await using (var read = new NpgsqlCommand("SELECT count(*) FROM certael_signed_configurations", connection, transaction))
+            Assert.Equal(2L, (long)(await read.ExecuteScalarAsync(token))!);
         await using var crossWrite = new NpgsqlCommand(
             "UPDATE certael_sessions SET tenant_id='tenant-b' WHERE session_id='session-a'", connection, transaction);
         PostgresException exception = await Assert.ThrowsAsync<PostgresException>(async () =>

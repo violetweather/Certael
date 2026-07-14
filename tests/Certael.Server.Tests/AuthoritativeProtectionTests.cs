@@ -1,6 +1,8 @@
 using System.Collections.Immutable;
 using Certael.Server.Evidence;
 using Certael.Server.Protections;
+using Certael.Persistence.Postgres;
+using Certael.Server.Actions;
 
 namespace Certael.Server.Tests;
 
@@ -49,5 +51,18 @@ public sealed class AuthoritativeProtectionTests
         Assert.Equal(FindingTrust.ClientOnly, findings[0].Trust);
         Assert.DoesNotContain(verdict.Recommendation,
             new[] { VerdictRecommendation.RecommendKick, VerdictRecommendation.RecommendTemporarySuspension });
+    }
+
+    [Fact]
+    public void AdvisoryEvidenceRetentionIsCappedAtThirtyDays()
+    {
+        Finding advisory = new(Guid.NewGuid(), "tenant", "game", "prod", "session", "player",
+            "behavior.rule", "1.0.0", new byte[32], null, SignalFamily.BehavioralAnomaly,
+            FindingTrust.ClientOnly, 10, 1, DateTimeOffset.UtcNow,
+            ImmutableArray<EvidenceField>.Empty);
+        Verdict verdict = new VerdictEngine(TimeProvider.System).Evaluate([advisory]);
+        EvidenceBundle bundle = EvidenceReplay.Create(verdict, [advisory]);
+        Assert.Equal(TimeSpan.FromDays(30),
+            PostgresEvidenceStore.RetentionFor(bundle, TimeSpan.FromDays(365)));
     }
 }

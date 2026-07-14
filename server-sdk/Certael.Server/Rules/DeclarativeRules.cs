@@ -123,9 +123,9 @@ public sealed class DeclarativeRuleEvaluator(int maximumOperations = 256, int ma
     private static bool RequireBoolean(object? value) => value is bool boolean
         ? boolean : throw new RuleEvaluationException("Logical operands must be boolean.");
 
-    private static bool IsIdentifier(string value) => value.Length <= 64
-        && (char.IsLetter(value[0]) || value[0] == '_')
-        && value.All(static character => char.IsLetterOrDigit(character) || character == '_');
+    private static bool IsIdentifier(string value) => value.Length is >= 1 and <= 64
+        && (char.IsAsciiLetter(value[0]) || value[0] == '_')
+        && value.All(static character => char.IsAsciiLetterOrDigit(character) || character == '_');
 }
 
 public sealed class RuleEvaluationException(string message) : Exception(message);

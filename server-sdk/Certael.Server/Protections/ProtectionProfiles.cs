@@ -15,7 +15,7 @@ public sealed record ProtectionFailurePolicy(
     AdmissionUnavailableMode AdmissionStoreUnavailable,
     RulesUnavailableMode RulesUnavailable);
 public sealed record ProtectionProfile(
-    string ProfileId, string Version, string GameId, string EnvironmentId,
+    string TenantId, string ProfileId, string Version, string GameId, string EnvironmentId,
     IReadOnlyDictionary<string, ProtectionActionPolicy> ActionPolicies,
     ProtectionFailurePolicy FailurePolicy);
 public sealed record SignedProtectionProfile(
@@ -45,9 +45,29 @@ public sealed class ProtectionProfileCompiler(ECDsa signingKey, string signingKe
         return JsonSerializer.SerializeToUtf8Bytes(ordered, Json);
     }
 
+    public static ProtectionProfile DeserializeCanonical(ReadOnlySpan<byte> canonical)
+    {
+        if (canonical.Length is < 1 or > 1_048_576)
+            throw new ProtectionProfileException("Canonical profile size is invalid.");
+        ProtectionProfile profile;
+        try
+        {
+            profile = JsonSerializer.Deserialize<ProtectionProfile>(canonical, Json)
+                ?? throw new ProtectionProfileException("Canonical profile is empty.");
+        }
+        catch (JsonException error)
+        {
+            throw new ProtectionProfileException($"Canonical profile is invalid: {error.Message}");
+        }
+        byte[] encoded = Canonicalize(profile, out ProtectionProfile ordered);
+        if (!CryptographicOperations.FixedTimeEquals(encoded, canonical))
+            throw new ProtectionProfileException("Profile encoding is not canonical.");
+        return ordered;
+    }
+
     public static void Validate(ProtectionProfile profile)
     {
-        Identifier(profile.ProfileId); Identifier(profile.GameId); Identifier(profile.EnvironmentId);
+        Identifier(profile.TenantId); Identifier(profile.ProfileId); Identifier(profile.GameId); Identifier(profile.EnvironmentId);
         if (!System.Version.TryParse(profile.Version, out _) || profile.ActionPolicies.Count is < 1 or > 10_000)
             throw new ProtectionProfileException("Profile version or action count is invalid.");
         foreach ((string actionType, ProtectionActionPolicy policy) in profile.ActionPolicies)
@@ -125,10 +145,10 @@ public sealed class ProtectionProfileLifecycleStore(
         return deployment;
     }
 
-    public ProtectionProfileDeployment Approve(string profileId, string version, string approver)
+    public ProtectionProfileDeployment Approve(string tenantId, string profileId, string version, string approver)
     {
         string subject = RequireSubject(approver);
-        return Update(profileId, version, current =>
+        return Update(tenantId, profileId, version, current =>
         {
             if (current.Approvals.Any(value => value.ApproverSubject == subject)) return current;
             var approval = new ProtectionProfileApproval(subject, timeProvider.GetUtcNow(),
@@ -142,7 +162,7 @@ public sealed class ProtectionProfileLifecycleStore(
         });
     }
 
-    public ProtectionProfileDeployment Promote(string profileId, string version,
+    public ProtectionProfileDeployment Promote(string tenantId, string profileId, string version,
         ProtectionDeploymentStage stage, int canaryPercentage, string operatorSubject)
     {
         if (stage is ProtectionDeploymentStage.Draft or ProtectionDeploymentStage.Retired)
@@ -155,7 +175,7 @@ public sealed class ProtectionProfileLifecycleStore(
         string subject = RequireSubject(operatorSubject);
         lock (_gate)
         {
-            ProtectionProfileDeployment current = Get(profileId, version);
+            ProtectionProfileDeployment current = Get(tenantId, profileId, version);
             if (!verifier.Verify(current.SignedProfile))
                 throw new ProtectionProfileException("Stored profile no longer verifies.");
             int requiredApprovals = stage == ProtectionDeploymentStage.Enforced ? 2 : 1;
@@ -187,10 +207,10 @@ public sealed class ProtectionProfileLifecycleStore(
         }
     }
 
-    public ProtectionProfileDeployment Rollback(string gameId, string environmentId,
+    public ProtectionProfileDeployment Rollback(string tenantId, string gameId, string environmentId,
         string operatorSubject)
     {
-        string environment = $"{gameId}\0{environmentId}";
+        string environment = $"{tenantId}\0{gameId}\0{environmentId}";
         lock (_gate)
         {
             if (!_history.TryGetValue(environment, out Stack<string>? history) || history.Count == 0)
@@ -221,25 +241,25 @@ public sealed class ProtectionProfileLifecycleStore(
         return bucket < deployment.CanaryPercentage;
     }
 
-    public ProtectionProfileDeployment Get(string profileId, string version) =>
-        _deployments.TryGetValue($"{profileId}\0{version}", out ProtectionProfileDeployment? value)
+    public ProtectionProfileDeployment Get(string tenantId, string profileId, string version) =>
+        _deployments.TryGetValue($"{tenantId}\0{profileId}\0{version}", out ProtectionProfileDeployment? value)
             ? value : throw new ProtectionProfileException("Profile does not exist.");
 
-    private ProtectionProfileDeployment Update(string profileId, string version,
+    private ProtectionProfileDeployment Update(string tenantId, string profileId, string version,
         Func<ProtectionProfileDeployment, ProtectionProfileDeployment> update)
     {
-        string key = $"{profileId}\0{version}";
+        string key = $"{tenantId}\0{profileId}\0{version}";
         while (true)
         {
-            ProtectionProfileDeployment current = Get(profileId, version);
+            ProtectionProfileDeployment current = Get(tenantId, profileId, version);
             ProtectionProfileDeployment next = update(current);
             if (_deployments.TryUpdate(key, next, current)) return next;
         }
     }
 
-    private static string Key(ProtectionProfile value) => $"{value.ProfileId}\0{value.Version}";
+    private static string Key(ProtectionProfile value) => $"{value.TenantId}\0{value.ProfileId}\0{value.Version}";
     private static string EnvironmentKey(ProtectionProfile value) =>
-        $"{value.GameId}\0{value.EnvironmentId}";
+        $"{value.TenantId}\0{value.GameId}\0{value.EnvironmentId}";
     private static string RequireSubject(string value) =>
         !string.IsNullOrWhiteSpace(value) && value.Length <= 128
             ? value : throw new ProtectionProfileException("Operator subject is invalid.");

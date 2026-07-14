@@ -20,6 +20,43 @@ The OAuth token must be certificate-bound through `cnf.x5t#S256`. Issue one
 short-lived identity per game/environment/workload. Do not reuse credentials
 between development and production or place them in clients.
 
+Agent workloads additionally use `agents:launch`, `agents:challenge`,
+`agents:report`, `agents:health`, and `agents:revoke`. Agent-policy operators use
+the separate `agent-policies:create`, `agent-policies:approve`,
+`agent-policies:promote`, `agent-policies:retire`, and read-only
+`agent-policies:read` scopes. Do not grant an
+authoritative game server the policy-administration scopes.
+Build-release operators use `agent-builds:register` and `agent-builds:revoke`;
+these scopes must remain separate from ordinary game-server identities.
+
+Rule-pack and protection-profile administration additionally uses:
+
+- `configurations:write`
+- `configurations:approve`
+- `configurations:promote`
+- `configurations:rollback`
+- `configurations:retire`
+
+Configure verification-only keys; never mount the configuration signing private
+key into the API:
+
+```json
+{
+  "ConfigurationSigning": {
+    "TrustedKeys": [
+      {
+        "KeyId": "rules-2026-q3",
+        "PublicKeyPemPath": "/run/secrets/certael-rules-public.pem"
+      }
+    ]
+  }
+}
+```
+
+Every configuration mutation also requires a reason, tenant/environment-bound
+OIDC claims, and a validated client certificate. Enforced promotion requires two
+distinct approver subjects over the exact stored digest.
+
 Set these configuration values outside source control:
 
 ```text
@@ -32,7 +69,25 @@ Signing__Audience=certael-session
 ConnectionStrings__Postgres=<secret reference>
 ConnectionStrings__Redis=<secret reference>
 OTEL_EXPORTER_OTLP_ENDPOINT=https://telemetry-collector.example.com
+Agent__SigningPrivateKeyPath=/run/secrets/certael-agent-ed25519.key
+Agent__SigningKeyId=agent-policy-2026-07
+Privacy__RawAgentReportRetentionMinutes=1440
+Privacy__DerivedEvidenceRetentionDays=30
+
+Player privacy requests use `POST /v1/admin/privacy/delete-player` with the
+`privacy:delete` scope. The operation is restricted to the caller's tenant and
+environment, atomically removes raw Agent reports before their parent sessions,
+removes derived evidence, and writes an audit event containing only a one-way
+resource digest rather than the player subject.
 ```
+
+`Agent:Policies` must contain at least one immutable tenant/game/environment
+policy outside Development. The first startup signs and stores it in PostgreSQL;
+subsequent startups compare configuration to the durable record and fail if it
+was changed in place. Promote new behavior with a new policy ID through the
+authenticated approval endpoints instead of editing an existing policy.
+Production also requires at least one `Agent:ApprovedBuilds` entry. Unknown and
+revoked build IDs fail closed before Core signs an Agent launch grant.
 
 For an overlapping rotation, configure `Signing:Keys` entries with `KeyId`,
 `PemPath`, `NotBefore`, `NotAfter`, `Usage=ticket-signing`, optional tenant and
@@ -116,8 +171,8 @@ signing configuration outside the Development environment.
 
 ## Data and availability
 
-PostgreSQL is the durable source for sessions, results, evidence, and atomic
-action state. Redis provides sequencing and ticket redemption. Configure HA,
+PostgreSQL is the durable source for sessions, ticket redemption, results,
+evidence, and atomic action state. Redis provides high-rate action sequencing. Configure HA,
 backups, point-in-time recovery, encryption, and alerts for both. Never fail open
 when either system cannot safely establish idempotency or replay state.
 

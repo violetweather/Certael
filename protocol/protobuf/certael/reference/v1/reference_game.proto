@@ -1,0 +1,40 @@
+syntax = "proto3";
+package certael.reference.v1;
+
+// Shared intent schemas used by the Godot, Unity, and Unreal reference clients.
+// Responses contain authoritative state; clients never submit final state.
+message MovementInputV1 {
+  double axis_x = 1;
+  double axis_y = 2;
+  uint64 client_input_number = 3;
+}
+
+message CraftRequestV1 {
+  string recipe_id = 1;
+  uint32 quantity = 2;
+  uint64 expected_revision = 3;
+}
+
+message PurchaseRequestV1 {
+  string offer_id = 1;
+  uint32 quantity = 2;
+  uint64 expected_revision = 3;
+}
+
+message TargetedAbilityRequestV1 {
+  string ability_id = 1;
+  string target_entity_id = 2;
+  uint64 client_input_number = 3;
+}
+
+message TradeOfferRequestV1 {
+  string counterparty_subject = 1;
+  string item_id = 2;
+  uint32 quantity = 3;
+  uint64 expected_revision = 4;
+}
+
+message ClaimMatchRewardRequestV1 {
+  string match_id = 1;
+  string reward_id = 2;
+}
