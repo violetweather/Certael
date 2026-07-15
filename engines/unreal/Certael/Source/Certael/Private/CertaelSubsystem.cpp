@@ -8,7 +8,9 @@ constexpr uint8 AgentHelloMessage = 1;
 constexpr uint8 LaunchGrantMessage = 2;
 constexpr uint8 ChallengeMessage = 3;
 constexpr uint8 IntegrityReportMessage = 4;
+constexpr uint8 AgentHealthMessage = 5;
 constexpr uint8 ShutdownMessage = 6;
+constexpr uint8 RevocationMessage = 7;
 constexpr uint32 RequiredProbeAbiVersion = 1;
 
 bool ReadAgentMessage(void* Channel, uint8& Type, TArray<uint8>& Payload) {
@@ -64,12 +66,20 @@ bool UCertaelSubsystem::ConnectToInheritedAgent(FCertaelAgentHello& Hello) {
 }
 
 bool UCertaelSubsystem::BindAgentLaunchBundle(
-    const TArray<uint8>& SignedPolicy, const TArray<uint8>& SignedGrant) {
+    const TArray<uint8>& SignedPolicy, const TArray<uint8>& SignedGrant,
+    const TArray<uint8>& SignedBuildManifest) {
     if (AgentChannel == nullptr) return false;
     TArray<uint8> Bundle;
-    if (!CertaelAgentCodec::EncodeLaunchBundle(SignedPolicy, SignedGrant, Bundle)) return false;
-    return certael_agent_channel_write(static_cast<certael_agent_channel*>(AgentChannel),
-        LaunchGrantMessage, Bundle.GetData(), static_cast<size_t>(Bundle.Num())) == CERTAEL_PROBE_OK;
+    if (!CertaelAgentCodec::EncodeLaunchBundle(SignedPolicy, SignedGrant,
+        SignedBuildManifest, Bundle)) return false;
+    if (certael_agent_channel_write(static_cast<certael_agent_channel*>(AgentChannel),
+        LaunchGrantMessage, Bundle.GetData(), static_cast<size_t>(Bundle.Num()))
+        != CERTAEL_PROBE_OK) return false;
+    uint8 Type = 0;
+    TArray<uint8> Health;
+    FString State;
+    return ReadAgentMessage(AgentChannel, Type, Health) && Type == AgentHealthMessage
+        && CertaelAgentCodec::DecodeHealthState(Health, State) && State == TEXT("ready");
 }
 
 bool UCertaelSubsystem::ExchangeAgentChallenge(
@@ -81,7 +91,27 @@ bool UCertaelSubsystem::ExchangeAgentChallenge(
         ChallengeMessage, CanonicalChallenge.GetData(), static_cast<size_t>(CanonicalChallenge.Num()))
         != CERTAEL_PROBE_OK) return false;
     uint8 Type = 0;
-    return ReadAgentMessage(AgentChannel, Type, SignedReport) && Type == IntegrityReportMessage;
+    do {
+        if (!ReadAgentMessage(AgentChannel, Type, SignedReport)) return false;
+        if (Type == AgentHealthMessage) SignedReport.Reset();
+    } while (Type == AgentHealthMessage);
+    return Type == IntegrityReportMessage;
+}
+
+bool UCertaelSubsystem::RevokeAgentSession(const TArray<uint8>& SignedRevocation) {
+    if (AgentChannel == nullptr || SignedRevocation.IsEmpty()
+        || SignedRevocation.Num() > CertaelAgentCodec::MaximumMessageBytes) return false;
+    if (certael_agent_channel_write(static_cast<certael_agent_channel*>(AgentChannel),
+        RevocationMessage, SignedRevocation.GetData(),
+        static_cast<size_t>(SignedRevocation.Num())) != CERTAEL_PROBE_OK) return false;
+    uint8 Type = 0;
+    TArray<uint8> Health;
+    FString State;
+    do {
+        if (!ReadAgentMessage(AgentChannel, Type, Health) || Type != AgentHealthMessage
+            || !CertaelAgentCodec::DecodeHealthState(Health, State)) return false;
+    } while (State != TEXT("revoked"));
+    return true;
 }
 
 void UCertaelSubsystem::ShutdownAgent() {

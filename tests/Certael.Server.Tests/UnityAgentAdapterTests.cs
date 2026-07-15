@@ -28,9 +28,18 @@ public sealed class UnityAgentAdapterTests
     [Fact]
     public void LaunchBundleUsesCanonicalTypedEnvelope()
     {
-        Assert.Equal("0a0301020312020405", Convert.ToHexString(
-            AgentLaunchBundleCodec.Encode([1, 2, 3], [4, 5])).ToLowerInvariant());
-        Assert.Throws<InvalidOperationException>(() => AgentLaunchBundleCodec.Encode([], [1]));
+        Assert.Equal("0a03010203120204051a0106", Convert.ToHexString(
+            AgentLaunchBundleCodec.Encode([1, 2, 3], [4, 5], [6])).ToLowerInvariant());
+        Assert.Throws<InvalidOperationException>(() =>
+            AgentLaunchBundleCodec.Encode([], [1], [2]));
+    }
+
+    [Fact]
+    public void HealthCodecExtractsCanonicalState()
+    {
+        Assert.Equal("ready", AgentHealthCodec.DecodeState([
+            0x0a, 0x07, (byte)'s', (byte)'e', (byte)'s', (byte)'s', (byte)'i', (byte)'o', (byte)'n',
+            0x12, 0x05, (byte)'r', (byte)'e', (byte)'a', (byte)'d', (byte)'y', 0x18, 0x00]));
     }
 
     private static void Bytes(Stream stream, uint field, ReadOnlySpan<byte> value)

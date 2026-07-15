@@ -167,7 +167,7 @@ public sealed class PersistenceIntegrationTests
 
         var buildRegistry = new PostgresAgentBuildRegistry(dataSource, TimeProvider.System);
         await buildRegistry.RegisterAsync("tenant-a", "game", "test", "build-1",
-            "release-operator", token);
+            "release-operator", [1], token);
         Assert.True(await buildRegistry.IsApprovedAsync("tenant-a", "game", "test",
             "build-1", token));
         Assert.False(await buildRegistry.IsApprovedAsync("tenant-b", "game", "test",

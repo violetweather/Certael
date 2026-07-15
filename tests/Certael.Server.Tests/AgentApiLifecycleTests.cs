@@ -34,6 +34,7 @@ public sealed class AgentApiLifecycleTests
         await Assert.ThrowsAsync<AgentBuildRegistryException>(() =>
             lifecycle.LaunchAsync(parameters, TestContext.Current.CancellationToken).AsTask());
         await builds.RegisterAsync("tenant", "game", "prod", "build", "operator",
+            [1],
             TestContext.Current.CancellationToken);
 
         AgentLaunchBundle launch = await lifecycle.LaunchAsync(parameters,

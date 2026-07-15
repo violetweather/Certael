@@ -106,15 +106,16 @@ authoritative. Follow the complete [Godot session walkthrough](docs/engine-suppo
 
 The same Godot zip includes the small platform probe. Install the separately
 released [Certael Agent](https://github.com/violetweather/Certael-Agent/releases)
-on the player's machine, install its public trust store
-outside the game directory, and have the Agent launch the exported game. Then:
+on the player's machine, register the game with its publisher-signed public
+trust material, and have the Agent launch the exported game. Then:
 
 ```gdscript
 if Certael.connect_agent():
     game_network.begin_agent_session(Certael.agent_hello())
 
-func on_agent_launch(signed_policy: PackedByteArray, signed_grant: PackedByteArray) -> void:
-    if not Certael.bind_agent_launch(signed_policy, signed_grant):
+func on_agent_launch(signed_policy: PackedByteArray, signed_grant: PackedByteArray,
+        signed_build_manifest: PackedByteArray) -> void:
+    if not Certael.bind_agent_launch(signed_policy, signed_grant, signed_build_manifest):
         push_error(Certael.agent_last_error())
 
 ## Run this blocking call in WorkerThreadPool, then forward the bytes unchanged.

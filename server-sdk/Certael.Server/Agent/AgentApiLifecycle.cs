@@ -9,7 +9,7 @@ public sealed record AgentLaunchParameters(
 
 public sealed record AgentLaunchBundle(
     string AgentSessionId, SignedAgentPolicy Policy, SignedAgentLaunchGrant Grant,
-    DateTimeOffset ExpiresAt);
+    DateTimeOffset ExpiresAt, byte[] SignedBuildManifest);
 
 public sealed class AgentApiLifecycle(
     AgentGrantSigner signer,
@@ -32,8 +32,9 @@ public sealed class AgentApiLifecycle(
             || !Identifier(request.Policy.PolicyId))
             throw new ArgumentException("Agent launch request is invalid.");
 
-        if (!await builds.IsApprovedAsync(request.TenantId, request.GameId,
-            request.EnvironmentId, request.BuildId, cancellationToken))
+        ApprovedAgentBuild? approvedBuild = await builds.ResolveApprovedAsync(request.TenantId,
+            request.GameId, request.EnvironmentId, request.BuildId, cancellationToken);
+        if (approvedBuild is null)
             throw new AgentBuildRegistryException("Agent build is not approved.");
         AgentPolicyDeployment approved = await policies.ResolveAsync(request.Policy.PolicyId,
             request.TenantId, request.GameId, request.EnvironmentId,
@@ -44,14 +45,16 @@ public sealed class AgentApiLifecycle(
         var grantClaims = new AgentLaunchGrantClaims(1, sessionId, request.TenantId,
             request.GameId, request.EnvironmentId, request.PlayerSubject, request.MatchId,
             request.BuildId, request.AgentPublicKey.ToArray(), now, grantExpiresAt,
-            AgentGrantCodec.PolicyDigest(policy), request.AuthoritativeServerId);
+            AgentGrantCodec.PolicyDigest(policy), request.AuthoritativeServerId,
+            SHA256.HashData(approvedBuild.SignedBuildManifest));
         SignedAgentLaunchGrant grant = signer.IssueLaunchGrant(grantClaims, now);
         DateTimeOffset sessionExpiresAt = now.Add(request.SessionLifetime);
         await store.CreateAsync(new VerifiedAgentSession(sessionId, request.TenantId,
             request.GameId, request.EnvironmentId, request.PlayerSubject, request.MatchId,
             request.BuildId, request.AgentPublicKey.ToArray(), 0, new byte[32],
             sessionExpiresAt, request.AuthoritativeServerId), cancellationToken);
-        return new(sessionId, policy, grant, sessionExpiresAt);
+        return new(sessionId, policy, grant, sessionExpiresAt,
+            approvedBuild.SignedBuildManifest.ToArray());
     }
 
     public async ValueTask<AgentReportChallenge?> ChallengeAsync(string tenantId,
@@ -119,6 +122,22 @@ public sealed class AgentApiLifecycle(
         return Bound(session, environmentId, authoritativeServerId)
             && await store.RevokeAsync(tenantId, agentSessionId, reason, clock.GetUtcNow(),
                 cancellationToken);
+    }
+
+    public async ValueTask<SignedAgentRevocation?> RevokeAndIssueAsync(string tenantId,
+        string environmentId, string authoritativeServerId, string agentSessionId,
+        string reason, CancellationToken cancellationToken)
+    {
+        VerifiedAgentSession? session = await store.FindAsync(tenantId, agentSessionId,
+            cancellationToken);
+        DateTimeOffset now = clock.GetUtcNow();
+        if (!Bound(session, environmentId, authoritativeServerId)
+            || !await store.RevokeAsync(tenantId, agentSessionId, reason, now,
+                cancellationToken))
+            return null;
+        return signer.IssueRevocation(new AgentRevocationClaims(1, tenantId,
+            session!.GameId, environmentId, agentSessionId, "SESSION_REVOKED", now,
+            now.AddMinutes(5)), now);
     }
 
     private static bool Bound(VerifiedAgentSession? session, string environmentId,

@@ -45,11 +45,13 @@ func agent_hello() -> Dictionary:
 	assert(_native != null, "Call initialize first")
 	return _native.agent_get_hello()
 
-## Sends the exact signed policy and server-bound launch grant returned by the
-## authoritative server. Never construct or sign these in the game client.
-func bind_agent_launch(signed_policy: PackedByteArray, signed_grant: PackedByteArray) -> bool:
+## Sends the exact signed policy, server-bound launch grant, and whole-build
+## manifest returned by the authoritative server. Never construct them here.
+func bind_agent_launch(signed_policy: PackedByteArray, signed_grant: PackedByteArray,
+		signed_build_manifest: PackedByteArray) -> bool:
 	assert(_native != null, "Call initialize first")
-	var bound: bool = _native.agent_bind_launch_bundle(signed_policy, signed_grant)
+	var bound: bool = _native.agent_bind_launch_bundle(signed_policy, signed_grant,
+		signed_build_manifest)
 	agent_health_changed.emit(agent_state(), agent_last_error())
 	return bound
 
@@ -60,6 +62,10 @@ func exchange_agent_challenge(canonical_challenge: PackedByteArray) -> PackedByt
 	var report: PackedByteArray = _native.agent_exchange_challenge(canonical_challenge)
 	call_deferred("_emit_agent_health")
 	return report
+
+## Relays the exact signed revocation returned by the authoritative server.
+func revoke_agent_session(signed_revocation: PackedByteArray) -> bool:
+	return _native != null and _native.agent_send_revocation(signed_revocation)
 
 func _emit_agent_health() -> void:
 	agent_health_changed.emit(agent_state(), agent_last_error())

@@ -29,10 +29,13 @@ void CertaelNative::_bind_methods() {
     ClassDB::bind_method(D_METHOD("agent_connect", "probe_path"), &CertaelNative::agent_connect,
         DEFVAL(String()));
     ClassDB::bind_method(D_METHOD("agent_get_hello"), &CertaelNative::agent_get_hello);
-    ClassDB::bind_method(D_METHOD("agent_bind_launch_bundle", "signed_policy", "signed_grant"),
+    ClassDB::bind_method(D_METHOD("agent_bind_launch_bundle", "signed_policy", "signed_grant",
+        "signed_build_manifest"),
         &CertaelNative::agent_bind_launch_bundle);
     ClassDB::bind_method(D_METHOD("agent_exchange_challenge", "canonical_challenge"),
         &CertaelNative::agent_exchange_challenge);
+    ClassDB::bind_method(D_METHOD("agent_send_revocation", "signed_revocation"),
+        &CertaelNative::agent_send_revocation);
     ClassDB::bind_method(D_METHOD("agent_shutdown"), &CertaelNative::agent_shutdown);
     ClassDB::bind_method(D_METHOD("agent_disconnect"), &CertaelNative::agent_disconnect);
     ClassDB::bind_method(D_METHOD("agent_get_state"), &CertaelNative::agent_get_state);
@@ -67,7 +70,9 @@ constexpr uint8_t kAgentHello = 1;
 constexpr uint8_t kLaunchGrant = 2;
 constexpr uint8_t kChallenge = 3;
 constexpr uint8_t kIntegrityReport = 4;
+constexpr uint8_t kAgentHealth = 5;
 constexpr uint8_t kShutdown = 6;
+constexpr uint8_t kRevocation = 7;
 
 String default_probe_path() {
 #if defined(_WIN32)
@@ -251,7 +256,7 @@ Dictionary CertaelNative::agent_get_hello() const {
 }
 
 bool CertaelNative::agent_bind_launch_bundle(const PackedByteArray& signed_policy,
-    const PackedByteArray& signed_grant) {
+    const PackedByteArray& signed_grant, const PackedByteArray& signed_build_manifest) {
     const std::lock_guard<std::mutex> lock(agent_channel_mutex_);
     if (agent_channel_ == nullptr) {
         agent_error_ = "AGENT_NOT_CONNECTED";
@@ -259,7 +264,8 @@ bool CertaelNative::agent_bind_launch_bundle(const PackedByteArray& signed_polic
     }
     std::vector<uint8_t> encoded;
     if (!certael::agent::encode_launch_bundle_v1(signed_policy.ptr(), signed_policy.size(),
-        signed_grant.ptr(), signed_grant.size(), encoded)) {
+        signed_grant.ptr(), signed_grant.size(), signed_build_manifest.ptr(),
+        signed_build_manifest.size(), encoded)) {
         agent_error_ = "AGENT_LAUNCH_BUNDLE_INVALID";
         return false;
     }
@@ -270,6 +276,17 @@ bool CertaelNative::agent_bind_launch_bundle(const PackedByteArray& signed_polic
         mark_agent_lost("AGENT_CHANNEL_LOST");
         return false;
     }
+    PackedByteArray health;
+    uint8_t type = 0;
+    std::string health_state;
+    if (!read_agent_message(type, health) || type != kAgentHealth
+        || !certael::agent::decode_health_state_v1(health.ptr(), health.size(), health_state)
+        || health_state != "ready") {
+        mark_agent_lost("AGENT_HEALTH_INVALID");
+        return false;
+    }
+    agent_state_ = "protected";
+    agent_error_ = "AGENT_PROTECTED";
     return true;
 }
 
@@ -286,7 +303,15 @@ PackedByteArray CertaelNative::agent_exchange_challenge(const PackedByteArray& c
         return report;
     }
     uint8_t type = 0;
-    if (!read_agent_message(type, report) || type != kIntegrityReport) {
+    do {
+        if (!read_agent_message(type, report)) {
+            report.clear();
+            mark_agent_lost("AGENT_REPORT_INVALID");
+            return report;
+        }
+        if (type == kAgentHealth) report.clear();
+    } while (type == kAgentHealth);
+    if (type != kIntegrityReport) {
         report.clear();
         mark_agent_lost("AGENT_REPORT_INVALID");
         return report;
@@ -294,6 +319,27 @@ PackedByteArray CertaelNative::agent_exchange_challenge(const PackedByteArray& c
     agent_state_ = "ready";
     agent_error_ = "AGENT_READY";
     return report;
+}
+
+bool CertaelNative::agent_send_revocation(const PackedByteArray& signed_revocation) {
+    const std::lock_guard<std::mutex> lock(agent_channel_mutex_);
+    if (agent_channel_ == nullptr || signed_revocation.is_empty()
+        || signed_revocation.size() > certael::agent::kMaximumFrameSize) return false;
+    if (channel_write_(agent_channel_, kRevocation, signed_revocation.ptr(),
+        signed_revocation.size()) != CERTAEL_PROBE_OK) return false;
+    for (;;) {
+        uint8_t type = 0;
+        PackedByteArray health;
+        std::string state;
+        if (!read_agent_message(type, health) || type != kAgentHealth
+            || !certael::agent::decode_health_state_v1(
+                health.ptr(), health.size(), state)) return false;
+        if (state == "revoked") {
+            agent_state_ = "revoked";
+            agent_error_ = "AGENT_SESSION_REVOKED";
+            return true;
+        }
+    }
 }
 
 void CertaelNative::agent_shutdown() {

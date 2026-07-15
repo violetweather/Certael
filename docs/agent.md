@@ -22,13 +22,17 @@ The game client must never mint an Agent policy or grant. A trusted game server 
 
 1. Launch the game through the Agent and receive `AgentHelloV1` from the inherited local channel.
 2. Send the hello's public key and build ID to `POST /v1/agent/sessions` using mTLS plus a certificate-bound, short-lived workload JWT with `agents:launch` scope.
-3. Receive `AgentLaunchResponseV1`. Relay only its `signed_policy` and `signed_launch_grant` fields to the local Agent as canonical `AgentLaunchBundleV1` bytes.
+3. Receive `AgentLaunchResponseV1`. Relay its `signed_policy`,
+   `signed_launch_grant`, and `signed_build_manifest` fields unchanged to the
+   local Agent as canonical `AgentLaunchBundleV1` bytes.
 4. Request a fresh challenge with `agents:challenge`, relay it to the Agent, then submit the returned signed report with `agents:report`.
-5. Query health at the policy cadence. Revoke the Agent session at match exit, account switch, server migration, or logout.
+5. Query health at the policy cadence. At match exit, account switch, server
+   migration, or logout, relay the canonical signed revocation returned by
+   Core before closing the local channel.
 
 The signed policy binds tenant, game, environment, requirement mode, cadence,
 grace window, version floor, and expiry. The signed launch grant binds that exact
-policy digest to tenant, game, environment, player, match, build, Agent ephemeral
+policy digest and exact signed build-manifest digest to tenant, game, environment, player, match, build, Agent ephemeral
 public key, and authoritative server. Both signed objects must agree on tenant,
 game, and environment. A server migration therefore creates a new Agent session
 and grant; an existing binding is never edited.
@@ -37,7 +41,8 @@ The workload JWT must contain matching `tenant_id`, `environment_id`, `server_id
 
 ## Agent trust store
 
-The separately installed Agent pins Core's Agent-policy verification keys in its local trust store:
+Each signed game registration pins Core's Agent verification keys in a
+per-game trust store. There is no mutable global game trust store:
 
 ```json
 {
@@ -53,7 +58,10 @@ The separately installed Agent pins Core's Agent-policy verification keys in its
 }
 ```
 
-The trust store is configuration, not a private key. It must ship through a signed Agent package or signed update and must not be writable by ordinary users. Unknown keys, revoked keys, keys outside their validity interval, symlinks, oversized files, malformed JSON, and group/world-writable Unix files fail closed.
+The trust store is public configuration, not a private key. Its digest is bound
+by the signed registration alongside the TUF root and executable path. Unknown
+keys, revoked keys, invalid registrations, mismatched digests, symlinks,
+oversized files, malformed JSON, and unsafe Unix permissions fail closed.
 
 Core's Agent signing private key must be supplied through a production KMS/HSM-backed signing deployment and must never be placed in an engine project, repository, container layer, or ordinary configuration value. Development uses a separate ephemeral key and is not production-compatible.
 
@@ -80,13 +88,28 @@ workload can select an approved policy ID when launching a session, but cannot
 override its requirement mode, timing, minimum Agent version, tenant, game, or
 environment.
 
-The launch build ID must also exist in the tenant/game/environment Agent build
-registry. Register and revoke these IDs with the separately scoped
-`/v1/admin/agent-builds` endpoints. Core rejects an otherwise valid launch
-before signing a grant when the build is unknown or revoked. A build ID is
-normally the lowercase SHA-256 digest of the approved exported executable; an
-integration may instead use a canonical manifest digest after independently
-verifying that complete manifest.
+The launch build must exist in the tenant/game/environment Agent build registry
+with a signed whole-build manifest. Generate the bounded registration request:
+
+```bash
+dotnet run --project cli/Certael.Cli -- agent-build request \
+  ./export tenant game production BUILD_ID 2027-01-01T00:00:00Z release \
+  agent-build-request.json
+```
+
+POST that JSON to `/v1/admin/agent-builds` using the scoped administrative
+identity. Core validates every relative path, size, SHA-256 digest, lifetime,
+and duplicate; signs the canonical binary manifest through the configured
+KMS/HSM boundary; and stores the exact signed bytes immutably. Game-server
+launch requests select only the build ID—they cannot supply or replace its
+manifest. Core returns the stored manifest and binds its digest into the launch
+grant. The Agent hashes every listed file before protected admission and fails
+closed if a file is missing, added to the manifest incorrectly, resized, or
+changed. Use `/v1/admin/agent-builds/revoke` to stop new admissions.
+
+Build approvals created before manifest support cannot authorize protected
+launch. Re-register each pre-1.0 build with the generated file list after
+applying database migration 016.
 
 Administrative policy creation, approval, promotion, and retirement use the
 `/v1/admin/agent-policies` endpoints. They require a trusted client certificate,
@@ -124,7 +147,7 @@ Godot, Unity, and Unreal adapters are local binary relays. They:
 - read the inherited channel handle established by the Agent launcher;
 - decode the bounded `AgentHelloV1`;
 - give the hello to trusted server bootstrap code;
-- relay canonical launch bundles, challenges, reports, and shutdown frames;
+- relay canonical launch bundles, health, challenges, reports, revocations, and shutdown frames;
 - expose health loss so protected online modes can fail according to policy.
 
 They do not sign policies, decide whether reports are honest, call account-ban APIs, or replace authoritative gameplay validation. Do not expose security-sensitive JSON or a Blueprint/GDScript method that lets an untrusted client invent a grant.

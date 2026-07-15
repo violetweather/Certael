@@ -51,6 +51,7 @@ message AgentLaunchGrantClaimsV1 {
   int64 expires_at_unix = 11;
   bytes policy_digest = 12;
   string authoritative_server_id = 13;
+  bytes build_manifest_digest = 14;
 }
 
 message SignedAgentLaunchGrantV1 {
@@ -60,10 +61,58 @@ message SignedAgentLaunchGrantV1 {
 }
 
 // Exact payload sent over the inherited Agent channel after AgentHelloV1.
-// Both nested messages remain independently canonical and signed.
+// All nested messages remain independently canonical and signed.
 message AgentLaunchBundleV1 {
   bytes signed_policy = 1;
   bytes signed_launch_grant = 2;
+  bytes signed_build_manifest = 3;
+}
+
+message ProtectedBuildFileV1 {
+  string path = 1;
+  uint64 size = 2;
+  bytes sha256 = 3;
+}
+
+message BuildManifestClaimsV1 {
+  uint32 protocol_version = 1;
+  string manifest_id = 2;
+  string tenant_id = 3;
+  string game_id = 4;
+  string environment_id = 5;
+  string build_id = 6;
+  repeated ProtectedBuildFileV1 files = 7;
+  int64 not_before_unix = 8;
+  int64 expires_at_unix = 9;
+}
+
+message SignedBuildManifestV1 {
+  bytes claims = 1;
+  bytes signature = 2;
+  string key_id = 3;
+}
+
+message GameRegistrationClaimsV1 {
+  uint32 protocol_version = 1;
+  string registration_id = 2;
+  string publisher_id = 3;
+  string tenant_id = 4;
+  string game_id = 5;
+  string environment_id = 6;
+  string executable_relative_path = 7;
+  bytes trust_store_sha256 = 8;
+  bytes update_root_sha256 = 9;
+  string update_metadata_url = 10;
+  string update_targets_url = 11;
+  string update_channel = 12;
+  int64 not_before_unix = 13;
+  int64 expires_at_unix = 14;
+}
+
+message SignedGameRegistrationV1 {
+  bytes claims = 1;
+  bytes signature = 2;
+  string key_id = 3;
 }
 
 message AgentReportChallengeV1 {
@@ -97,10 +146,21 @@ message AgentHealthV1 {
   repeated string public_reasons = 4;
 }
 
-message AgentRevocationV1 {
-  string agent_session_id = 1;
-  string reason = 2;
-  int64 revoked_at_unix = 3;
+message AgentRevocationClaimsV1 {
+  uint32 protocol_version = 1;
+  string tenant_id = 2;
+  string game_id = 3;
+  string environment_id = 4;
+  string agent_session_id = 5;
+  string reason = 6;
+  int64 revoked_at_unix = 7;
+  int64 expires_at_unix = 8;
+}
+
+message SignedAgentRevocationV1 {
+  bytes claims = 1;
+  bytes signature = 2;
+  string key_id = 3;
 }
 
 message AgentLaunchRequestV1 {
@@ -127,6 +187,7 @@ message AgentLaunchResponseV1 {
   bytes signed_policy = 2;
   bytes signed_launch_grant = 3;
   int64 expires_at_unix = 4;
+  bytes signed_build_manifest = 5;
 }
 
 message AgentOperationRequestV1 {

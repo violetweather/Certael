@@ -420,15 +420,20 @@ app.MapPost("/v1/agent/sessions/{agentSessionId}/revoke", async (string agentSes
             request.EnvironmentId, request.AuthoritativeServerId);
         if (denied is not null) return denied;
         if (!ValidReason(request.Reason)) return Results.BadRequest();
-        bool revoked = await lifecycle.RevokeAsync(request.TenantId, request.EnvironmentId,
+        SignedAgentRevocation? revocation = await lifecycle.RevokeAndIssueAsync(
+            request.TenantId, request.EnvironmentId,
             request.AuthoritativeServerId, agentSessionId, request.Reason, cancellationToken);
+        bool revoked = revocation is not null;
         string subject = http.User.FindFirstValue("sub") ?? "unknown";
         DateTimeOffset now = clock.GetUtcNow();
         await audit.AppendAsync(new AuditEvent(Guid.NewGuid(), request.TenantId,
             request.EnvironmentId, subject, "agent.session.revoke", "agent-session",
             agentSessionId, request.Reason, null, null, http.TraceIdentifier, now, revoked,
             http.Connection.RemoteIpAddress?.ToString(), subject), cancellationToken);
-        return revoked ? Results.NoContent() : Results.NotFound();
+        return revocation is not null
+            ? Results.Bytes(AgentGrantCodec.EncodeSignedRevocation(revocation),
+                AgentApiCodec.ContentType)
+            : Results.NotFound();
     }
     catch (AgentApiException) { return Results.BadRequest(); }
 }).RequireAuthorization().RequireRateLimiting("service-operations");
@@ -500,7 +505,8 @@ app.MapPost("/v1/admin/privacy/delete-player", async (PlayerDeletionRequest requ
 }).RequireAuthorization().RequireRateLimiting("administration");
 
 app.MapPost("/v1/admin/agent-builds", async (AgentBuildMutationRequest request,
-    HttpContext http, IAgentBuildAdministration builds, IAuditStore audit,
+    HttpContext http, IAgentBuildAdministration builds, AgentGrantSigner signer,
+    TimeProvider clock, IAuditStore audit,
     CancellationToken cancellationToken) =>
 {
     IResult? denied = AuthorizeAdministration(http, "agent-builds:register",
@@ -510,8 +516,16 @@ app.MapPost("/v1/admin/agent-builds", async (AgentBuildMutationRequest request,
     string subject = http.User.FindFirstValue("sub") ?? "unknown";
     try
     {
+        DateTimeOffset now = clock.GetUtcNow();
+        var claims = new AgentBuildManifestClaims(1, Guid.NewGuid().ToString("N"),
+            request.TenantId, request.GameId, request.EnvironmentId, request.BuildId,
+            (request.Files ?? []).Select(file => new ProtectedAgentBuildFile(file.Path, file.Size,
+                file.Sha256)).ToArray(), now, request.ExpiresAt ?? now.AddDays(180));
+        byte[] signedManifest = AgentGrantCodec.EncodeSignedBuildManifest(
+            signer.IssueBuildManifest(claims, now));
         ApprovedAgentBuild registered = await builds.RegisterAsync(request.TenantId,
-            request.GameId, request.EnvironmentId, request.BuildId, subject, cancellationToken);
+            request.GameId, request.EnvironmentId, request.BuildId, subject, signedManifest,
+            cancellationToken);
         await AuditAgentBuild(audit, http, request, "agent-build.register", true,
             cancellationToken);
         return Results.Created("/v1/admin/agent-builds", registered);
@@ -1030,17 +1044,13 @@ static InMemoryAgentBuildRegistry LoadAgentBuildRegistry(IConfiguration configur
     IConfigurationSection[] configured = configuration.GetSection("Agent:ApprovedBuilds")
         .GetChildren().ToArray();
     if (configured.Length == 0 && environment.IsDevelopment())
-    {
-        registry.RegisterAsync("development-tenant", "development-game", "development",
-            "development-build", "development-bootstrap", CancellationToken.None)
-            .AsTask().GetAwaiter().GetResult();
         return registry;
-    }
     foreach (IConfigurationSection item in configured)
     {
         AgentBuildConfiguration build = ReadAgentBuildConfiguration(item);
         registry.RegisterAsync(build.TenantId, build.GameId, build.EnvironmentId,
-            build.BuildId, "deployment-config", CancellationToken.None)
+            build.BuildId, "deployment-config", build.SignedBuildManifest,
+            CancellationToken.None)
             .AsTask().GetAwaiter().GetResult();
     }
     return registry;
@@ -1068,7 +1078,8 @@ static async Task SeedConfiguredAgentBuildsAsync(IServiceProvider services,
         if (!await registry.IsApprovedAsync(build.TenantId, build.GameId,
             build.EnvironmentId, build.BuildId, cancellationToken))
             await administration.RegisterAsync(build.TenantId, build.GameId,
-                build.EnvironmentId, build.BuildId, "deployment-config", cancellationToken);
+                build.EnvironmentId, build.BuildId, "deployment-config",
+                build.SignedBuildManifest, cancellationToken);
     }
 }
 
@@ -1077,7 +1088,10 @@ static AgentBuildConfiguration ReadAgentBuildConfiguration(IConfigurationSection
     item["GameId"] ?? throw new InvalidOperationException("Approved build requires GameId."),
     item["EnvironmentId"] ?? throw new InvalidOperationException(
         "Approved build requires EnvironmentId."),
-    item["BuildId"] ?? throw new InvalidOperationException("Approved build requires BuildId."));
+    item["BuildId"] ?? throw new InvalidOperationException("Approved build requires BuildId."),
+    Convert.FromBase64String(item["SignedBuildManifestBase64"]
+        ?? throw new InvalidOperationException(
+            "Approved build requires SignedBuildManifestBase64.")));
 
 static string RequiredSetting(IConfiguration configuration, IHostEnvironment environment,
     string key, string developmentDefault) =>
@@ -1323,7 +1337,10 @@ public sealed record AgentPolicyCreateRequest(
     string Reason);
 
 public sealed record AgentBuildMutationRequest(
-    string TenantId, string GameId, string EnvironmentId, string BuildId, string Reason);
+    string TenantId, string GameId, string EnvironmentId, string BuildId, string Reason,
+    IReadOnlyList<AgentBuildFileRequest>? Files = null, DateTimeOffset? ExpiresAt = null);
+
+public sealed record AgentBuildFileRequest(string Path, ulong Size, byte[] Sha256);
 
 public sealed record AgentPolicyMutationRequest(
     string TenantId, string EnvironmentId, string Reason);
@@ -1378,6 +1395,7 @@ file sealed record AgentPolicyConfiguration(
     int CanaryPercentage, IReadOnlyList<string> Approvals);
 
 file sealed record AgentBuildConfiguration(
-    string TenantId, string GameId, string EnvironmentId, string BuildId);
+    string TenantId, string GameId, string EnvironmentId, string BuildId,
+    byte[] SignedBuildManifest);
 
 public partial class Program;
