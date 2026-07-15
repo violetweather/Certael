@@ -18,6 +18,10 @@ internal static class CertaelCli
                     await SignRules(input, privateKey, keyId, destination, output),
                 ["manifest", "generate", string root, string destination] =>
                     await GenerateManifest(root, destination, output),
+                ["agent-build", "request", string root, string tenant, string game,
+                    string environment, string build, string expiresAt, string reason,
+                    string destination] => await GenerateAgentBuildRequest(root, tenant, game,
+                        environment, build, expiresAt, reason, destination, output),
                 ["agent-key", "generate-development", string keyId, string privateKey,
                     string trustStore] => await GenerateDevelopmentAgentKey(keyId, privateKey,
                         trustStore, output),
@@ -82,6 +86,40 @@ internal static class CertaelCli
         await WriteAtomic(destination, JsonSerializer.SerializeToUtf8Bytes(manifest,
             new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = true }));
         await output.WriteLineAsync($"manifested {files.Length} files");
+        return 0;
+    }
+
+    private static async Task<int> GenerateAgentBuildRequest(string rootPath, string tenantId,
+        string gameId, string environmentId, string buildId, string expiresAtText,
+        string reason, string destination, TextWriter output)
+    {
+        if (!DateTimeOffset.TryParse(expiresAtText, out DateTimeOffset expiresAt))
+            throw new ArgumentException("expires-at must be an ISO-8601 timestamp.");
+        string root = Path.GetFullPath(rootPath);
+        if (!Directory.Exists(root))
+            throw new DirectoryNotFoundException("Manifest root does not exist.");
+        string destinationFull = Path.GetFullPath(destination);
+        AgentBuildFile[] files = Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)
+            .Where(path => Path.GetFullPath(path) != destinationFull)
+            .Select(path =>
+            {
+                var info = new FileInfo(path);
+                if (info.LinkTarget is not null)
+                    throw new IOException("Symbolic links are prohibited in protected manifests.");
+                string relative = Path.GetRelativePath(root, path)
+                    .Replace(Path.DirectorySeparatorChar, '/');
+                using FileStream stream = File.OpenRead(path);
+                return new AgentBuildFile(relative, checked((ulong)info.Length),
+                    SHA256.HashData(stream));
+            })
+            .OrderBy(file => file.Path, StringComparer.Ordinal)
+            .ToArray();
+        var request = new AgentBuildRequest(tenantId, gameId, environmentId, buildId,
+            reason, files, expiresAt);
+        await WriteAtomic(destination, JsonSerializer.SerializeToUtf8Bytes(request,
+            new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                WriteIndented = true }));
+        await output.WriteLineAsync($"prepared {files.Length} protected files for {buildId}");
         return 0;
     }
 
@@ -181,6 +219,7 @@ internal static class CertaelCli
         error.WriteLine("usage: certaelctl rules validate <pack.yaml>");
         error.WriteLine("       certaelctl rules sign <pack.yaml> <private.pem> <key-id> <output.json>");
         error.WriteLine("       certaelctl manifest generate <root> <output.json>");
+        error.WriteLine("       certaelctl agent-build request <root> <tenant> <game> <environment> <build> <expires-at> <reason> <output.json>");
         error.WriteLine("       certaelctl agent-key generate-development <key-id> <private.key> <trust-store.json>");
         error.WriteLine("       certaelctl doctor");
         return 1;
@@ -192,3 +231,7 @@ internal sealed record SignedRulePackEnvelope(
     string DigestSha256, string SignatureBase64);
 internal sealed record BuildManifest(int Version, string Algorithm, IReadOnlyList<BuildFile> Files);
 internal sealed record BuildFile(string Path, long Size, string Digest);
+internal sealed record AgentBuildRequest(string TenantId, string GameId, string EnvironmentId,
+    string BuildId, string Reason, IReadOnlyList<AgentBuildFile> Files,
+    DateTimeOffset ExpiresAt);
+internal sealed record AgentBuildFile(string Path, ulong Size, byte[] Sha256);

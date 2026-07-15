@@ -63,6 +63,27 @@ inline bool safe_identifier(const std::vector<std::uint8_t>& value, std::size_t 
     return true;
 }
 
+inline bool decode_health_state_v1(const std::uint8_t* input, std::size_t size,
+    std::string& state) {
+    if (input == nullptr || size == 0 || size > kMaximumFrameSize) return false;
+    std::size_t offset = 0;
+    std::vector<std::uint8_t> session;
+    std::vector<std::uint8_t> state_bytes;
+    std::uint64_t key = 0, timestamp = 0;
+    if (!read_bytes_field(input, size, offset, 1, 128, session)
+        || !read_bytes_field(input, size, offset, 2, 32, state_bytes)
+        || !read_varint(input, size, offset, key) || key != (3u << 3)
+        || !read_varint(input, size, offset, timestamp)
+        || !safe_identifier(session, 128) || !safe_identifier(state_bytes, 32)) return false;
+    while (offset < size) {
+        std::vector<std::uint8_t> reason;
+        if (!read_bytes_field(input, size, offset, 4, 128, reason)
+            || !safe_identifier(reason, 128)) return false;
+    }
+    state.assign(state_bytes.begin(), state_bytes.end());
+    return true;
+}
+
 inline bool decode_hello_v1(const std::uint8_t* input, std::size_t size, HelloV1& output) {
     if (input == nullptr || size == 0 || size > kMaximumFrameSize) return false;
     std::size_t offset = 0;
@@ -103,13 +124,17 @@ inline void append_bytes_field(std::vector<std::uint8_t>& output, std::uint32_t 
 }
 
 inline bool encode_launch_bundle_v1(const std::uint8_t* policy, std::size_t policy_size,
-    const std::uint8_t* grant, std::size_t grant_size, std::vector<std::uint8_t>& output) {
-    if (policy == nullptr || grant == nullptr || policy_size == 0 || grant_size == 0
-        || policy_size > kMaximumLaunchPartSize || grant_size > kMaximumLaunchPartSize) return false;
+    const std::uint8_t* grant, std::size_t grant_size, const std::uint8_t* manifest,
+    std::size_t manifest_size, std::vector<std::uint8_t>& output) {
+    if (policy == nullptr || grant == nullptr || manifest == nullptr || policy_size == 0
+        || grant_size == 0 || manifest_size == 0 || policy_size > kMaximumLaunchPartSize
+        || grant_size > kMaximumLaunchPartSize || manifest_size > kMaximumLaunchPartSize)
+        return false;
     std::vector<std::uint8_t> encoded;
-    encoded.reserve(policy_size + grant_size + 16);
+    encoded.reserve(policy_size + grant_size + manifest_size + 24);
     append_bytes_field(encoded, 1, policy, policy_size);
     append_bytes_field(encoded, 2, grant, grant_size);
+    append_bytes_field(encoded, 3, manifest, manifest_size);
     if (encoded.size() > kMaximumFrameSize) return false;
     output = std::move(encoded);
     return true;

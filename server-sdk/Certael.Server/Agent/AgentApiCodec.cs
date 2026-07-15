@@ -59,6 +59,7 @@ public static class AgentApiCodec
         Bytes(stream, 2, AgentGrantCodec.EncodeSignedPolicy(value.Policy));
         Bytes(stream, 3, AgentGrantCodec.EncodeSignedLaunchGrant(value.Grant));
         UInt(stream, 4, checked((ulong)value.ExpiresAt.ToUnixTimeSeconds()));
+        Bytes(stream, 5, value.SignedBuildManifest);
         return Finish(stream);
     }
 
@@ -68,6 +69,7 @@ public static class AgentApiCodec
         using var stream = New();
         Bytes(stream, 1, AgentGrantCodec.EncodeSignedPolicy(value.Policy));
         Bytes(stream, 2, AgentGrantCodec.EncodeSignedLaunchGrant(value.Grant));
+        Bytes(stream, 3, value.SignedBuildManifest);
         return Finish(stream);
     }
 

@@ -19,8 +19,8 @@ When Certael Agent launched the game:
    trusted dedicated server.
 2. The server calls Certael's authenticated Agent launch API with its workload
    identity and the hello's public key/build.
-3. Relay only the returned signed policy and signed grant to
-   `BindAgentLaunchBundle`.
+3. Relay only the returned signed policy, signed grant, and signed build
+   manifest to `BindAgentLaunchBundle`.
 4. For each server-issued canonical challenge, call `ExchangeAgentChallenge` on
    a worker thread and forward the returned signed report unchanged.
 5. Call `ShutdownAgent` on logout, account switch, match exit, or server migration,

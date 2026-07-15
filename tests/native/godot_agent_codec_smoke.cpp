@@ -33,11 +33,22 @@ int main() {
 
     const std::array<std::uint8_t, 3> policy {1, 2, 3};
     const std::array<std::uint8_t, 2> grant {4, 5};
+    const std::array<std::uint8_t, 1> manifest {6};
     std::vector<std::uint8_t> bundle;
     assert(certael::agent::encode_launch_bundle_v1(
-        policy.data(), policy.size(), grant.data(), grant.size(), bundle));
-    const std::vector<std::uint8_t> expected {0x0a, 0x03, 1, 2, 3, 0x12, 0x02, 4, 5};
+        policy.data(), policy.size(), grant.data(), grant.size(), manifest.data(),
+        manifest.size(), bundle));
+    const std::vector<std::uint8_t> expected {
+        0x0a, 0x03, 1, 2, 3, 0x12, 0x02, 4, 5, 0x1a, 0x01, 6};
     assert(bundle == expected);
     assert(!certael::agent::encode_launch_bundle_v1(
-        policy.data(), 0, grant.data(), grant.size(), bundle));
+        policy.data(), 0, grant.data(), grant.size(), manifest.data(), manifest.size(), bundle));
+
+    const std::vector<std::uint8_t> health {
+        0x0a, 0x07, 's', 'e', 's', 's', 'i', 'o', 'n',
+        0x12, 0x05, 'r', 'e', 'a', 'd', 'y', 0x18, 0x00};
+    std::string health_state;
+    assert(certael::agent::decode_health_state_v1(
+        health.data(), health.size(), health_state));
+    assert(health_state == "ready");
 }

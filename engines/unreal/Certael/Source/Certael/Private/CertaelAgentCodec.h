@@ -69,6 +69,26 @@ inline bool DecodeHello(const TArray<uint8>& Input, FCertaelAgentHello& Output) 
     return true;
 }
 
+inline bool DecodeHealthState(const TArray<uint8>& Input, FString& State) {
+    if (Input.IsEmpty() || Input.Num() > MaximumMessageBytes) return false;
+    int32 Offset = 0;
+    TArray<uint8> Session, StateBytes, Reason;
+    uint64 Key = 0, Timestamp = 0;
+    if (!ReadBytes(Input, Offset, 1, 128, Session)
+        || !ReadBytes(Input, Offset, 2, 32, StateBytes)
+        || !ReadVarint(Input, Offset, Key) || Key != (3u << 3)
+        || !ReadVarint(Input, Offset, Timestamp)
+        || !SafeIdentifier(Session, 128) || !SafeIdentifier(StateBytes, 32)) return false;
+    while (Offset < Input.Num()) {
+        if (!ReadBytes(Input, Offset, 4, 128, Reason)
+            || !SafeIdentifier(Reason, 128)) return false;
+    }
+    const FUTF8ToTCHAR Text(reinterpret_cast<const ANSICHAR*>(StateBytes.GetData()),
+        StateBytes.Num());
+    State = FString(Text.Length(), Text.Get());
+    return true;
+}
+
 inline void AppendVarint(TArray<uint8>& Output, uint64 Value) {
     while (Value >= 0x80) { Output.Add(static_cast<uint8>(Value) | 0x80); Value >>= 7; }
     Output.Add(static_cast<uint8>(Value));
@@ -81,13 +101,15 @@ inline void AppendBytes(TArray<uint8>& Output, uint32 Field, const TArray<uint8>
 }
 
 inline bool EncodeLaunchBundle(const TArray<uint8>& Policy, const TArray<uint8>& Grant,
-    TArray<uint8>& Output) {
-    if (Policy.IsEmpty() || Grant.IsEmpty() || Policy.Num() > MaximumLaunchPartBytes
-        || Grant.Num() > MaximumLaunchPartBytes) return false;
+    const TArray<uint8>& Manifest, TArray<uint8>& Output) {
+    if (Policy.IsEmpty() || Grant.IsEmpty() || Manifest.IsEmpty()
+        || Policy.Num() > MaximumLaunchPartBytes || Grant.Num() > MaximumLaunchPartBytes
+        || Manifest.Num() > MaximumLaunchPartBytes) return false;
     TArray<uint8> Encoded;
-    Encoded.Reserve(Policy.Num() + Grant.Num() + 16);
+    Encoded.Reserve(Policy.Num() + Grant.Num() + Manifest.Num() + 24);
     AppendBytes(Encoded, 1, Policy);
     AppendBytes(Encoded, 2, Grant);
+    AppendBytes(Encoded, 3, Manifest);
     if (Encoded.Num() > MaximumMessageBytes) return false;
     Output = MoveTemp(Encoded);
     return true;

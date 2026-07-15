@@ -17,9 +17,25 @@ public sealed record AgentLaunchGrantClaims(
     uint ProtocolVersion, string GrantId, string TenantId, string GameId,
     string EnvironmentId, string PlayerSubject, string MatchId, string BuildId,
     byte[] AgentPublicKey, DateTimeOffset IssuedAt, DateTimeOffset ExpiresAt,
-    byte[] PolicyDigest, string AuthoritativeServerId);
+    byte[] PolicyDigest, string AuthoritativeServerId, byte[] BuildManifestDigest);
 
 public sealed record SignedAgentLaunchGrant(byte[] Claims, byte[] Signature, string KeyId);
+
+public sealed record ProtectedAgentBuildFile(string Path, ulong Size, byte[] Sha256);
+
+public sealed record AgentBuildManifestClaims(
+    uint ProtocolVersion, string ManifestId, string TenantId, string GameId,
+    string EnvironmentId, string BuildId, IReadOnlyList<ProtectedAgentBuildFile> Files,
+    DateTimeOffset NotBefore, DateTimeOffset ExpiresAt);
+
+public sealed record SignedAgentBuildManifest(byte[] Claims, byte[] Signature, string KeyId);
+
+public sealed record AgentRevocationClaims(
+    uint ProtocolVersion, string TenantId, string GameId, string EnvironmentId,
+    string AgentSessionId, string Reason, DateTimeOffset RevokedAt,
+    DateTimeOffset ExpiresAt);
+
+public sealed record SignedAgentRevocation(byte[] Claims, byte[] Signature, string KeyId);
 
 public sealed record AgentGrantSignature(string KeyId, byte[] Signature);
 
@@ -46,6 +62,10 @@ public sealed class AgentGrantSigner
 {
     private static readonly byte[] PolicyDomain = "certael.agent.policy.v1\0"u8.ToArray();
     private static readonly byte[] LaunchDomain = "certael.agent.launch.v1\0"u8.ToArray();
+    private static readonly byte[] RevocationDomain =
+        "certael.agent.revocation.v1\0"u8.ToArray();
+    private static readonly byte[] BuildManifestDomain =
+        "certael.agent.build-manifest.v1\0"u8.ToArray();
     private readonly IAgentGrantSigningProvider _provider;
 
     public AgentGrantSigner(Key signingKey, string keyId)
@@ -68,6 +88,24 @@ public sealed class AgentGrantSigner
         ValidateGrant(claims, now);
         byte[] encoded = AgentGrantCodec.EncodeLaunchGrantClaims(claims);
         AgentGrantSignature signature = Sign(LaunchDomain, encoded, now);
+        return new(encoded, signature.Signature, signature.KeyId);
+    }
+
+    public SignedAgentRevocation IssueRevocation(AgentRevocationClaims claims,
+        DateTimeOffset now)
+    {
+        ValidateRevocation(claims, now);
+        byte[] encoded = AgentGrantCodec.EncodeRevocationClaims(claims);
+        AgentGrantSignature signature = Sign(RevocationDomain, encoded, now);
+        return new(encoded, signature.Signature, signature.KeyId);
+    }
+
+    public SignedAgentBuildManifest IssueBuildManifest(AgentBuildManifestClaims claims,
+        DateTimeOffset now)
+    {
+        ValidateBuildManifest(claims, now);
+        byte[] encoded = AgentGrantCodec.EncodeBuildManifestClaims(claims);
+        AgentGrantSignature signature = Sign(BuildManifestDomain, encoded, now);
         return new(encoded, signature.Signature, signature.KeyId);
     }
 
@@ -106,11 +144,47 @@ public sealed class AgentGrantSigner
             || !Identifier(claims.MatchId) || !Identifier(claims.BuildId)
             || !Identifier(claims.AuthoritativeServerId)
             || claims.AgentPublicKey.Length != 32 || claims.PolicyDigest.Length != 32
+            || claims.BuildManifestDigest.Length != 32
             || claims.IssuedAt > now.AddSeconds(30) || claims.ExpiresAt <= claims.IssuedAt
             || claims.ExpiresAt - claims.IssuedAt > TimeSpan.FromMinutes(2)
             || claims.ExpiresAt <= now)
             throw new ArgumentException("Agent launch grant is invalid.");
     }
+
+    private static void ValidateRevocation(AgentRevocationClaims claims, DateTimeOffset now)
+    {
+        if (claims.ProtocolVersion != 1 || !Identifier(claims.TenantId)
+            || !Identifier(claims.GameId) || !Identifier(claims.EnvironmentId)
+            || !Identifier(claims.AgentSessionId) || !Identifier(claims.Reason)
+            || claims.RevokedAt > now.AddSeconds(30) || claims.ExpiresAt <= now
+            || claims.ExpiresAt <= claims.RevokedAt
+            || claims.ExpiresAt - claims.RevokedAt > TimeSpan.FromMinutes(5))
+            throw new ArgumentException("Agent revocation is invalid.");
+    }
+
+    private static void ValidateBuildManifest(AgentBuildManifestClaims claims,
+        DateTimeOffset now)
+    {
+        if (claims.ProtocolVersion != 1 || !Identifier(claims.ManifestId)
+            || !Identifier(claims.TenantId) || !Identifier(claims.GameId)
+            || !Identifier(claims.EnvironmentId) || !Identifier(claims.BuildId)
+            || claims.Files.Count is < 1 or > 16384
+            || claims.NotBefore > now.AddSeconds(30) || claims.ExpiresAt <= now
+            || claims.ExpiresAt <= claims.NotBefore
+            || claims.ExpiresAt - claims.NotBefore > TimeSpan.FromDays(400))
+            throw new ArgumentException("Agent build manifest is invalid.");
+        var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (ProtectedAgentBuildFile file in claims.Files)
+            if (!SafeRelativePath(file.Path) || file.Sha256.Length != 32
+                || !paths.Add(file.Path))
+                throw new ArgumentException("Agent build manifest contains an invalid file.");
+    }
+
+    private static bool SafeRelativePath(string path) => !string.IsNullOrWhiteSpace(path)
+        && path.Length <= 512 && !path.StartsWith('/') && !path.Contains('\\')
+        && !(path.Length >= 2 && path[1] == ':')
+        && path.Split('/').All(part => part.Length > 0 && part is not "." and not ".."
+            && !part.Any(char.IsControl));
 
     private static bool Identifier(string value) => !string.IsNullOrEmpty(value)
         && value.Length <= 128 && value.All(character => char.IsAsciiLetterOrDigit(character)
@@ -156,6 +230,7 @@ public static class AgentGrantCodec
         VarintField(stream, 11, checked((ulong)value.ExpiresAt.ToUnixTimeSeconds()));
         Bytes(stream, 12, value.PolicyDigest);
         String(stream, 13, value.AuthoritativeServerId);
+        Bytes(stream, 14, value.BuildManifestDigest);
         return stream.ToArray();
     }
 
@@ -171,6 +246,64 @@ public static class AgentGrantCodec
         using var stream = new MemoryStream();
         Bytes(stream, 1, value.Claims); Bytes(stream, 2, value.Signature); String(stream, 3, value.KeyId);
         return stream.ToArray();
+    }
+
+    public static byte[] EncodeRevocationClaims(AgentRevocationClaims value)
+    {
+        using var stream = new MemoryStream();
+        VarintField(stream, 1, value.ProtocolVersion);
+        String(stream, 2, value.TenantId);
+        String(stream, 3, value.GameId);
+        String(stream, 4, value.EnvironmentId);
+        String(stream, 5, value.AgentSessionId);
+        String(stream, 6, value.Reason);
+        VarintField(stream, 7, checked((ulong)value.RevokedAt.ToUnixTimeSeconds()));
+        VarintField(stream, 8, checked((ulong)value.ExpiresAt.ToUnixTimeSeconds()));
+        return stream.ToArray();
+    }
+
+    public static byte[] EncodeSignedRevocation(SignedAgentRevocation value)
+    {
+        using var stream = new MemoryStream();
+        Bytes(stream, 1, value.Claims); Bytes(stream, 2, value.Signature);
+        String(stream, 3, value.KeyId);
+        return stream.ToArray();
+    }
+
+    public static byte[] EncodeBuildManifestClaims(AgentBuildManifestClaims value)
+    {
+        using var stream = new MemoryStream();
+        VarintField(stream, 1, value.ProtocolVersion);
+        String(stream, 2, value.ManifestId);
+        String(stream, 3, value.TenantId);
+        String(stream, 4, value.GameId);
+        String(stream, 5, value.EnvironmentId);
+        String(stream, 6, value.BuildId);
+        foreach (ProtectedAgentBuildFile file in value.Files)
+        {
+            using var nested = new MemoryStream();
+            String(nested, 1, file.Path);
+            VarintField(nested, 2, file.Size);
+            Bytes(nested, 3, file.Sha256);
+            Bytes(stream, 7, nested.ToArray());
+        }
+        VarintField(stream, 8, checked((ulong)value.NotBefore.ToUnixTimeSeconds()));
+        VarintField(stream, 9, checked((ulong)value.ExpiresAt.ToUnixTimeSeconds()));
+        byte[] encoded = stream.ToArray();
+        if (encoded.Length > 64 * 1024)
+            throw new ArgumentException("Agent build manifest exceeds 64 KiB.");
+        return encoded;
+    }
+
+    public static byte[] EncodeSignedBuildManifest(SignedAgentBuildManifest value)
+    {
+        using var stream = new MemoryStream();
+        Bytes(stream, 1, value.Claims); Bytes(stream, 2, value.Signature);
+        String(stream, 3, value.KeyId);
+        byte[] encoded = stream.ToArray();
+        if (encoded.Length > 64 * 1024)
+            throw new ArgumentException("Signed Agent build manifest exceeds 64 KiB.");
+        return encoded;
     }
 
     public static byte[] PolicyDigest(SignedAgentPolicy policy) =>

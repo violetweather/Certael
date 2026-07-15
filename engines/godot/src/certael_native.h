@@ -42,8 +42,9 @@ public:
     bool agent_connect(const String& probe_path = "");
     Dictionary agent_get_hello() const;
     bool agent_bind_launch_bundle(const PackedByteArray& signed_policy,
-        const PackedByteArray& signed_grant);
+        const PackedByteArray& signed_grant, const PackedByteArray& signed_build_manifest);
     PackedByteArray agent_exchange_challenge(const PackedByteArray& canonical_challenge);
+    bool agent_send_revocation(const PackedByteArray& signed_revocation);
     void agent_shutdown();
     void agent_disconnect();
     String agent_get_state() const;

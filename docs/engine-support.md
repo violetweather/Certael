@@ -76,8 +76,9 @@ existing authenticated multiplayer transport, not methods supplied by Certael.
 ### Optional Agent lifecycle
 
 The prebuilt Godot archive contains the matching Agent probe. The companion
-Agent application and its public trust store are installed separately; private
-signing keys never belong in the project. Set `certael/agent/required` to `true`
+Agent application is installed separately, and the game is added with a signed
+per-game registration plus public trust and update roots; private signing keys
+never belong in the project. Set `certael/agent/required` to `true`
 only for exports that must refuse protected play when the probe is absent.
 The export plugin stages the probe as a native shared object rather than packing
 it into the PCK; test the exported player, not only the editor.
@@ -97,7 +98,7 @@ func begin_protected_mode() -> void:
     game_network.begin_agent_session(hello)
 
 func on_agent_launch_material(policy: PackedByteArray, grant: PackedByteArray) -> void:
-    if not Certael.bind_agent_launch(policy, grant):
+    if not Certael.bind_agent_launch(policy, grant, signed_build_manifest):
         protected_mode_failed(Certael.agent_last_error())
 ```
 
@@ -171,10 +172,12 @@ For protected modes launched by Certael Agent, create one
 and strictly validates the canonical hello. Send `GetAgentHello()` to trusted
 server bootstrap code; its build ID and copied ephemeral public key are inputs
 to the authenticated Agent launch API. Relay the returned signed components
-with `BindAgentLaunchBundle`, then call `ExchangeChallenge` for each canonical
+with `BindAgentLaunchBundle(signedPolicy, signedGrant, signedBuildManifest)`,
+then call `ExchangeChallenge` for each canonical
 server challenge and forward the returned signed report unchanged. The exchange
 blocks, so it must not run on Unity's render thread. Call `ShutdownAgent` at
-logout, match exit, or server migration.
+ordinary process exit. At logout, match exit, or server migration, first call
+`RevokeSession` with the signed revocation returned by Core.
 
 The Unity adapter does not mint policies or grants and does not interpret a
 report as gameplay authorization. A channel error moves local health to `Lost`;

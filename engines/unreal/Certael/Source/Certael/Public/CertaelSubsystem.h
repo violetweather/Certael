@@ -61,13 +61,18 @@ public:
     UFUNCTION(BlueprintCallable, Category="Certael|Agent")
     bool ConnectToInheritedAgent(FCertaelAgentHello& Hello);
 
-    /** Relays only server-signed policy and grant bytes to the Agent. */
+    /** Relays only server-signed policy, grant, and whole-build manifest bytes. */
     UFUNCTION(BlueprintCallable, Category="Certael|Agent")
-    bool BindAgentLaunchBundle(const TArray<uint8>& SignedPolicy, const TArray<uint8>& SignedGrant);
+    bool BindAgentLaunchBundle(const TArray<uint8>& SignedPolicy,
+        const TArray<uint8>& SignedGrant, const TArray<uint8>& SignedBuildManifest);
 
     /** Blocking call: run from a worker thread, never the game/render thread. */
     UFUNCTION(BlueprintCallable, Category="Certael|Agent")
     bool ExchangeAgentChallenge(const TArray<uint8>& CanonicalChallenge, TArray<uint8>& SignedReport);
+
+    /** Relays the canonical signed revocation returned by the authoritative server. */
+    UFUNCTION(BlueprintCallable, Category="Certael|Agent")
+    bool RevokeAgentSession(const TArray<uint8>& SignedRevocation);
 
     UFUNCTION(BlueprintCallable, Category="Certael|Agent")
     void ShutdownAgent();

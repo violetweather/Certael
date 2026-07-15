@@ -38,7 +38,7 @@ public sealed class CertaelAgentHello
 public sealed class CertaelAgentConnection : IDisposable
 {
     private const byte AgentHelloMessage = 1, LaunchGrant = 2, Challenge = 3,
-        IntegrityReport = 4, Shutdown = 6;
+        IntegrityReport = 4, AgentHealth = 5, Shutdown = 6, Revocation = 7;
     private IntPtr _channel;
     private CertaelAgentHello? _hello;
     private CertaelAgentHealth _health = new(CertaelAgentState.Disconnected, "AGENT_NOT_CONNECTED");
@@ -70,17 +70,25 @@ public sealed class CertaelAgentConnection : IDisposable
     public CertaelAgentHello GetAgentHello() => _hello?.Copy()
         ?? throw new InvalidOperationException("Agent is not connected.");
 
-    public void BindAgentLaunchBundle(byte[] signedPolicy, byte[] signedGrant)
+    public void BindAgentLaunchBundle(byte[] signedPolicy, byte[] signedGrant,
+        byte[] signedBuildManifest)
     {
         if (signedPolicy is null) throw new ArgumentNullException(nameof(signedPolicy));
         if (signedGrant is null) throw new ArgumentNullException(nameof(signedGrant));
+        if (signedBuildManifest is null)
+            throw new ArgumentNullException(nameof(signedBuildManifest));
         if (_channel == IntPtr.Zero)
             throw new InvalidOperationException("Agent connection or launch grant is invalid.");
-        byte[] grantBytes = AgentLaunchBundleCodec.Encode(signedPolicy, signedGrant);
+        byte[] grantBytes = AgentLaunchBundleCodec.Encode(signedPolicy, signedGrant,
+            signedBuildManifest);
         try
         {
             Throw(CertaelAgentNative.certael_agent_channel_write(_channel, LaunchGrant,
                 grantBytes, (nuint)grantBytes.Length));
+            (byte type, byte[] health) = ReadMessage();
+            if (type != AgentHealth || AgentHealthCodec.DecodeState(health) != "ready")
+                throw new InvalidOperationException("Agent did not confirm protected state.");
+            _health = new(CertaelAgentState.Ready, "AGENT_PROTECTED");
         }
         catch
         {
@@ -104,6 +112,13 @@ public sealed class CertaelAgentConnection : IDisposable
             Throw(CertaelAgentNative.certael_agent_channel_write(_channel, Challenge,
                 canonicalChallenge, (nuint)canonicalChallenge.Length));
             (byte type, byte[] report) = ReadMessage();
+            while (type == AgentHealth)
+            {
+                string state = AgentHealthCodec.DecodeState(report);
+                _health = new(state is "ready" or "protected" ? CertaelAgentState.Ready
+                    : CertaelAgentState.Degraded, $"AGENT_{state.ToUpperInvariant()}");
+                (type, report) = ReadMessage();
+            }
             if (type != IntegrityReport)
                 throw new InvalidOperationException("Agent returned an unexpected message.");
             _health = new(CertaelAgentState.Ready, "AGENT_READY");
@@ -114,6 +129,24 @@ public sealed class CertaelAgentConnection : IDisposable
             _health = new(CertaelAgentState.Lost, "AGENT_CHANNEL_LOST");
             throw;
         }
+    }
+
+    public void RevokeSession(byte[] signedRevocation)
+    {
+        if (signedRevocation is null) throw new ArgumentNullException(nameof(signedRevocation));
+        if (_channel == IntPtr.Zero || signedRevocation.Length is < 1 or > 64 * 1024)
+            throw new InvalidOperationException("Agent connection or revocation is invalid.");
+        Throw(CertaelAgentNative.certael_agent_channel_write(_channel, Revocation,
+            signedRevocation, (nuint)signedRevocation.Length));
+        string state;
+        do
+        {
+            (byte type, byte[] health) = ReadMessage();
+            if (type != AgentHealth)
+                throw new InvalidOperationException("Agent did not acknowledge revocation.");
+            state = AgentHealthCodec.DecodeState(health);
+        } while (state != "revoked");
+        _health = new(CertaelAgentState.Lost, "AGENT_SESSION_REVOKED");
     }
 
     public void ShutdownAgent()
@@ -169,14 +202,74 @@ public sealed class CertaelAgentConnection : IDisposable
     }
 }
 
+internal static class AgentHealthCodec
+{
+    internal static string DecodeState(ReadOnlySpan<byte> input)
+    {
+        int offset = 0;
+        byte[] session = Bytes(input, ref offset, 1, 128);
+        byte[] state = Bytes(input, ref offset, 2, 32);
+        if (Varint(input, ref offset) != 24) throw Invalid();
+        _ = Varint(input, ref offset);
+        while (offset < input.Length) _ = Bytes(input, ref offset, 4, 128);
+        string sessionText = Utf8(session), stateText = Utf8(state);
+        if (!Safe(sessionText) || !Safe(stateText)) throw Invalid();
+        return stateText;
+    }
+
+    private static byte[] Bytes(ReadOnlySpan<byte> input, ref int offset, uint field, int maximum)
+    {
+        if (Varint(input, ref offset) != ((ulong)field << 3 | 2)) throw Invalid();
+        ulong length = Varint(input, ref offset);
+        if (length > (ulong)maximum || length > (ulong)(input.Length - offset)) throw Invalid();
+        byte[] result = input.Slice(offset, (int)length).ToArray(); offset += (int)length;
+        return result;
+    }
+    private static ulong Varint(ReadOnlySpan<byte> input, ref int offset)
+    {
+        int start = offset; ulong value = 0;
+        for (int shift = 0; shift <= 63; shift += 7)
+        {
+            if (offset >= input.Length) throw Invalid();
+            byte current = input[offset++];
+            if (shift == 63 && current > 1) throw Invalid();
+            value |= (ulong)(current & 0x7f) << shift;
+            if ((current & 0x80) == 0)
+            {
+                int expected = 1; for (ulong copy = value; copy >= 0x80; copy >>= 7) expected++;
+                if (offset - start != expected) throw Invalid();
+                return value;
+            }
+        }
+        throw Invalid();
+    }
+    private static string Utf8(byte[] value)
+    {
+        try { return new System.Text.UTF8Encoding(false, true).GetString(value); }
+        catch (System.Text.DecoderFallbackException) { throw Invalid(); }
+    }
+    private static bool Safe(string value) => value.Length > 0 && value.Length <= 128
+        && Array.TrueForAll(value.ToCharArray(), character =>
+            (character >= 'a' && character <= 'z')
+            || (character >= 'A' && character <= 'Z')
+            || (character >= '0' && character <= '9')
+            || character is '.' or '_' or '-');
+    private static InvalidOperationException Invalid() =>
+        new("Agent health message is not canonical.");
+}
+
 internal static class AgentLaunchBundleCodec
 {
-    internal static byte[] Encode(ReadOnlySpan<byte> signedPolicy, ReadOnlySpan<byte> signedGrant)
+    internal static byte[] Encode(ReadOnlySpan<byte> signedPolicy, ReadOnlySpan<byte> signedGrant,
+        ReadOnlySpan<byte> signedBuildManifest)
     {
-        if (signedPolicy.Length is < 1 or > 32 * 1024 || signedGrant.Length is < 1 or > 32 * 1024)
+        if (signedPolicy.Length is < 1 or > 32 * 1024
+            || signedGrant.Length is < 1 or > 32 * 1024
+            || signedBuildManifest.Length is < 1 or > 32 * 1024)
             throw new InvalidOperationException("Signed Agent launch material is invalid.");
         using var stream = new System.IO.MemoryStream();
         Bytes(stream, 1, signedPolicy); Bytes(stream, 2, signedGrant);
+        Bytes(stream, 3, signedBuildManifest);
         if (stream.Length > 64 * 1024)
             throw new InvalidOperationException("Agent launch bundle exceeds 64 KiB.");
         return stream.ToArray();

@@ -4,19 +4,23 @@ namespace Certael.Server.Agent;
 
 public sealed record ApprovedAgentBuild(
     string TenantId, string GameId, string EnvironmentId, string BuildId,
-    DateTimeOffset RegisteredAt, string RegisteredBy, DateTimeOffset? RevokedAt = null,
+    DateTimeOffset RegisteredAt, string RegisteredBy, byte[] SignedBuildManifest,
+    DateTimeOffset? RevokedAt = null,
     string? RevokedBy = null);
 
 public interface IAgentBuildRegistry
 {
     ValueTask<bool> IsApprovedAsync(string tenantId, string gameId, string environmentId,
         string buildId, CancellationToken cancellationToken);
+    ValueTask<ApprovedAgentBuild?> ResolveApprovedAsync(string tenantId, string gameId,
+        string environmentId, string buildId, CancellationToken cancellationToken);
 }
 
 public interface IAgentBuildAdministration
 {
     ValueTask<ApprovedAgentBuild> RegisterAsync(string tenantId, string gameId,
         string environmentId, string buildId, string operatorSubject,
+        byte[] signedBuildManifest,
         CancellationToken cancellationToken);
     ValueTask<bool> RevokeAsync(string tenantId, string gameId, string environmentId,
         string buildId, string operatorSubject, CancellationToken cancellationToken);
@@ -30,12 +34,15 @@ public sealed class InMemoryAgentBuildRegistry(TimeProvider timeProvider)
 
     public ValueTask<ApprovedAgentBuild> RegisterAsync(string tenantId, string gameId,
         string environmentId, string buildId, string operatorSubject,
+        byte[] signedBuildManifest,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         Validate(tenantId, gameId, environmentId, buildId, operatorSubject);
+        if (signedBuildManifest.Length is < 1 or > 64 * 1024)
+            throw new AgentBuildRegistryException("Signed build manifest is invalid.");
         var value = new ApprovedAgentBuild(tenantId, gameId, environmentId, buildId,
-            timeProvider.GetUtcNow(), operatorSubject);
+            timeProvider.GetUtcNow(), operatorSubject, signedBuildManifest.ToArray());
         if (!_builds.TryAdd(Key(tenantId, gameId, environmentId, buildId), value))
             throw new AgentBuildRegistryException("Build is already registered.");
         return ValueTask.FromResult(value);
@@ -64,6 +71,15 @@ public sealed class InMemoryAgentBuildRegistry(TimeProvider timeProvider)
         return ValueTask.FromResult(_builds.TryGetValue(
             Key(tenantId, gameId, environmentId, buildId), out ApprovedAgentBuild? value)
             && value.RevokedAt is null);
+    }
+
+    public ValueTask<ApprovedAgentBuild?> ResolveApprovedAsync(string tenantId, string gameId,
+        string environmentId, string buildId, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        _builds.TryGetValue(Key(tenantId, gameId, environmentId, buildId), out var value);
+        return ValueTask.FromResult(value is null || value.RevokedAt is not null ? null
+            : value with { SignedBuildManifest = value.SignedBuildManifest.ToArray() });
     }
 
     private static string Key(string tenantId, string gameId, string environmentId,

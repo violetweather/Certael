@@ -19,7 +19,8 @@ public sealed class AgentGrantTests
             "certael.agent.policy.v1\0"u8.ToArray().Concat(policy.Claims).ToArray(), policy.Signature));
         byte[] digest = AgentGrantCodec.PolicyDigest(policy);
         var grantClaims = new AgentLaunchGrantClaims(1, "grant", "tenant", "game", "prod",
-            "player", "match", "build", new byte[32], now, now.AddSeconds(60), digest, "server");
+            "player", "match", "build", new byte[32], now, now.AddSeconds(60), digest, "server",
+            new byte[32]);
         SignedAgentLaunchGrant grant = signer.IssueLaunchGrant(grantClaims, now);
         Assert.True(SignatureAlgorithm.Ed25519.Verify(key.PublicKey,
             "certael.agent.launch.v1\0"u8.ToArray().Concat(grant.Claims).ToArray(), grant.Signature));
@@ -34,7 +35,7 @@ public sealed class AgentGrantTests
         var signer = new AgentGrantSigner(key, "key");
         var invalid = new AgentLaunchGrantClaims(1, "grant", "tenant", "game", "prod",
             "player", "match", "build", new byte[31], now, now.AddMinutes(5), new byte[32],
-            "server");
+            "server", new byte[32]);
         Assert.Throws<ArgumentException>(() => signer.IssueLaunchGrant(invalid, now));
     }
 
@@ -53,9 +54,9 @@ public sealed class AgentGrantTests
             DateTimeOffset.FromUnixTimeSeconds(1_700_000_000),
             DateTimeOffset.FromUnixTimeSeconds(1_700_000_060),
             Convert.FromHexString("947CC7A0C10233B2FF5C0AAE415B2E37CFC97915E5747EDCC3EB8245F600F440"),
-            "server");
+            "server", Enumerable.Repeat((byte)5, 32).ToArray());
         Assert.Equal(
-            "080112056772616e741a0674656e616e74220467616d652a0470726f643206706c617965723a056d6174636842056275696c644a20ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c5080e2cfaa0658bce2cfaa066220947cc7a0c10233b2ff5c0aae415b2e37cfc97915e5747edcc3eb8245f600f4406a06736572766572",
+            "080112056772616e741a0674656e616e74220467616d652a0470726f643206706c617965723a056d6174636842056275696c644a20ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c5080e2cfaa0658bce2cfaa066220947cc7a0c10233b2ff5c0aae415b2e37cfc97915e5747edcc3eb8245f600f4406a0673657276657272200505050505050505050505050505050505050505050505050505050505050505",
             Convert.ToHexString(AgentGrantCodec.EncodeLaunchGrantClaims(claims)).ToLowerInvariant());
     }
 
@@ -72,6 +73,46 @@ public sealed class AgentGrantTests
         Assert.True(SignatureAlgorithm.Ed25519.Verify(key.PublicKey,
             "certael.agent.policy.v1\0"u8.ToArray().Concat(policy.Claims).ToArray(),
             policy.Signature));
+    }
+
+    [Fact]
+    public void SignsCanonicalWholeBuildManifestAndRevocation()
+    {
+        DateTimeOffset now = DateTimeOffset.FromUnixTimeSeconds(1_800_000_000);
+        using Key key = Key.Create(SignatureAlgorithm.Ed25519);
+        var signer = new AgentGrantSigner(key, "agent-key-1");
+        var manifestClaims = new AgentBuildManifestClaims(1, "build-manifest", "tenant",
+            "game", "prod", "build", [new("bin/game.exe", 42, new byte[32])],
+            now, now.AddDays(30));
+        SignedAgentBuildManifest manifest = signer.IssueBuildManifest(manifestClaims, now);
+        Assert.True(SignatureAlgorithm.Ed25519.Verify(key.PublicKey,
+            "certael.agent.build-manifest.v1\0"u8.ToArray().Concat(manifest.Claims).ToArray(),
+            manifest.Signature));
+        Assert.InRange(AgentGrantCodec.EncodeSignedBuildManifest(manifest).Length, 1,
+            64 * 1024);
+
+        SignedAgentRevocation revocation = signer.IssueRevocation(
+            new(1, "tenant", "game", "prod", "session", "SESSION_REVOKED", now,
+                now.AddMinutes(5)), now);
+        Assert.True(SignatureAlgorithm.Ed25519.Verify(key.PublicKey,
+            "certael.agent.revocation.v1\0"u8.ToArray().Concat(revocation.Claims).ToArray(),
+            revocation.Signature));
+        Assert.Equal(64, revocation.Signature.Length);
+    }
+
+    [Fact]
+    public void RejectsManifestPathTraversalAndCaseCollisions()
+    {
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        using Key key = Key.Create(SignatureAlgorithm.Ed25519);
+        var signer = new AgentGrantSigner(key, "key");
+        AgentBuildManifestClaims Base(IReadOnlyList<ProtectedAgentBuildFile> files) =>
+            new(1, "manifest", "tenant", "game", "prod", "build", files, now,
+                now.AddDays(1));
+        Assert.Throws<ArgumentException>(() => signer.IssueBuildManifest(
+            Base([new("../game", 1, new byte[32])]), now));
+        Assert.Throws<ArgumentException>(() => signer.IssueBuildManifest(Base([
+            new("Game.exe", 1, new byte[32]), new("game.exe", 1, new byte[32])]), now));
     }
 
     private sealed class TestSigningProvider(Key key) : IAgentGrantSigningProvider
