@@ -8,7 +8,7 @@
   "action_protocol_version": 1,
   "agent_protocol_version": 1,
   "agent_probe_abi_version": 1,
-  "pinned_agent_source_commit": "b05c27afa71456a939f5618b3a0357f5a812aade",
+  "pinned_agent_source_commit": "688fc9dc709183a9d4585f09e6902b452818b75b",
   "certified_engines": {
     "godot": "4.7",
     "unity": "6000.3.16f1",
