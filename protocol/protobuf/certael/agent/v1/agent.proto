@@ -84,6 +84,13 @@ message BuildManifestClaimsV1 {
   repeated ProtectedBuildFileV1 files = 7;
   int64 not_before_unix = 8;
   int64 expires_at_unix = 9;
+  string core_sdk_version = 10;
+  string engine_adapter = 11;
+  string engine_adapter_version = 12;
+  uint32 core_c_abi_version = 13;
+  uint32 action_protocol_version = 14;
+  uint32 agent_protocol_version = 15;
+  uint32 agent_probe_abi_version = 16;
 }
 
 message SignedBuildManifestV1 {

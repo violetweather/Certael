@@ -139,6 +139,7 @@ challenges and verifies reports. Competitive modes can set
 - [Custom game rules](docs/rules.md)
 - [Protection modules](docs/protections.md)
 - [Optional Certael Agent integration](docs/agent.md)
+- [Version support, required updates, and withdrawals](docs/compatibility.md)
 - [Production operations](docs/operations.md)
 - [Troubleshooting](docs/troubleshooting.md)
 - [Acceptance status](docs/acceptance-status.md)

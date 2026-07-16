@@ -1,5 +1,7 @@
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Text.Json.Serialization;
+using Certael.Server.Compatibility;
 using Certael.Server.Rules;
 using NSec.Cryptography;
 
@@ -19,18 +21,30 @@ internal static class CertaelCli
                 ["manifest", "generate", string root, string destination] =>
                     await GenerateManifest(root, destination, output),
                 ["agent-build", "request", string root, string tenant, string game,
-                    string environment, string build, string expiresAt, string reason,
-                    string destination] => await GenerateAgentBuildRequest(root, tenant, game,
-                        environment, build, expiresAt, reason, destination, output),
+                    string environment, string build, string engineAdapter,
+                    string adapterVersion, string coreSdkVersion, string expiresAt,
+                    string reason, string destination] => await GenerateAgentBuildRequest(root,
+                        tenant, game, environment, build, engineAdapter, adapterVersion,
+                        coreSdkVersion, expiresAt, reason, destination, output),
                 ["agent-key", "generate-development", string keyId, string privateKey,
                     string trustStore] => await GenerateDevelopmentAgentKey(keyId, privateKey,
                         trustStore, output),
+                ["compatibility", "generate-development-key", string keyId,
+                    string privateKey, string trustStore] => await GenerateDevelopmentAgentKey(
+                        keyId, privateKey, trustStore, output, "compatibility"),
+                ["compatibility", "sign", string input, string privateKey, string keyId,
+                    string destination] => await SignCompatibility(input, privateKey, keyId,
+                        destination, output),
+                ["compatibility", "check", string signedPath, string trustStore,
+                    string product, string version, string protocol] => await CheckCompatibility(
+                        signedPath, trustStore, product, version, protocol, output),
                 ["doctor"] => await Doctor(output),
                 _ => Usage(error)
             };
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
-            or CryptographicException or RulePackValidationException or ArgumentException)
+            or CryptographicException or RulePackValidationException or ArgumentException
+            or FormatException or JsonException)
         {
             await error.WriteLineAsync($"error: {exception.Message}");
             return 2;
@@ -90,11 +104,16 @@ internal static class CertaelCli
     }
 
     private static async Task<int> GenerateAgentBuildRequest(string rootPath, string tenantId,
-        string gameId, string environmentId, string buildId, string expiresAtText,
-        string reason, string destination, TextWriter output)
+        string gameId, string environmentId, string buildId, string engineAdapter,
+        string adapterVersion, string coreSdkVersion, string expiresAtText, string reason,
+        string destination, TextWriter output)
     {
         if (!DateTimeOffset.TryParse(expiresAtText, out DateTimeOffset expiresAt))
             throw new ArgumentException("expires-at must be an ISO-8601 timestamp.");
+        if (engineAdapter is not ("godot" or "unity" or "unreal" or "native")
+            || !SemanticVersion.TryParse(adapterVersion, out _)
+            || !SemanticVersion.TryParse(coreSdkVersion, out _))
+            throw new ArgumentException("Engine adapter or SDK version is invalid.");
         string root = Path.GetFullPath(rootPath);
         if (!Directory.Exists(root))
             throw new DirectoryNotFoundException("Manifest root does not exist.");
@@ -115,10 +134,14 @@ internal static class CertaelCli
             .OrderBy(file => file.Path, StringComparer.Ordinal)
             .ToArray();
         var request = new AgentBuildRequest(tenantId, gameId, environmentId, buildId,
-            reason, files, expiresAt);
+            reason, files, expiresAt, coreSdkVersion, engineAdapter, adapterVersion,
+            1, 1, 1, 1);
         await WriteAtomic(destination, JsonSerializer.SerializeToUtf8Bytes(request,
-            new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-                WriteIndented = true }));
+            new JsonSerializerOptions
+            {
+                PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                WriteIndented = true
+            }));
         await output.WriteLineAsync($"prepared {files.Length} protected files for {buildId}");
         return 0;
     }
@@ -132,7 +155,8 @@ internal static class CertaelCli
     }
 
     private static async Task<int> GenerateDevelopmentAgentKey(string keyId,
-        string privateKeyPath, string trustStorePath, TextWriter output)
+        string privateKeyPath, string trustStorePath, TextWriter output,
+        string purpose = "Agent")
     {
         if (string.IsNullOrWhiteSpace(keyId) || keyId.Length > 128
             || keyId.Any(character => !char.IsAsciiLetterOrDigit(character)
@@ -173,12 +197,81 @@ internal static class CertaelCli
             }
         }
         finally { CryptographicOperations.ZeroMemory(privateKey); }
-        await output.WriteLineAsync("generated development-only Agent keypair");
+        await output.WriteLineAsync($"generated development-only {purpose} keypair");
         await output.WriteLineAsync($"private key: {Path.GetFullPath(privateKeyPath)}");
         await output.WriteLineAsync($"public trust store: {Path.GetFullPath(trustStorePath)}");
         await output.WriteLineAsync("production must use an HSM/KMS signing provider");
         return 0;
     }
+
+    private static async Task<int> SignCompatibility(string inputPath, string privateKeyPath,
+        string keyId, string destination, TextWriter output)
+    {
+        CompatibilitySource source = JsonSerializer.Deserialize<CompatibilitySource>(
+            await File.ReadAllBytesAsync(inputPath), JsonOptions())
+            ?? throw new ArgumentException("Compatibility source is empty.");
+        var claims = new CompatibilityManifestClaims(source.SchemaVersion, source.Revision,
+            source.IssuedAt, source.ExpiresAt,
+            source.Products.Select(product => new CompatibilityProductRule(
+                ParseProduct(product.Product), product.MinimumSupportedVersion,
+                product.RecommendedVersion, product.MinimumProtocolVersion,
+                product.MaximumProtocolVersion)).ToArray(),
+            source.Revocations.Select(revocation => new CompatibilityRevocation(
+                ParseProduct(revocation.Product), revocation.Version,
+                revocation.EffectiveAt, revocation.Reason)).ToArray());
+        byte[] privateKey = await File.ReadAllBytesAsync(privateKeyPath);
+        try
+        {
+            using Key key = Key.Import(SignatureAlgorithm.Ed25519, privateKey,
+                KeyBlobFormat.RawPrivateKey);
+            SignedCompatibilityManifest signed = new CompatibilityManifestSigner(key, keyId)
+                .Sign(claims, DateTimeOffset.UtcNow);
+            await WriteAtomic(destination, CompatibilityManifestCodec.EncodeSigned(signed));
+            await output.WriteLineAsync($"signed compatibility revision {claims.Revision}");
+        }
+        finally { CryptographicOperations.ZeroMemory(privateKey); }
+        return 0;
+    }
+
+    private static async Task<int> CheckCompatibility(string signedPath, string trustStorePath,
+        string productText, string version, string protocolText, TextWriter output)
+    {
+        SignedCompatibilityManifest signed = CompatibilityManifestCodec.DecodeSigned(
+            await File.ReadAllBytesAsync(signedPath));
+        CompatibilityTrustStore source = JsonSerializer.Deserialize<CompatibilityTrustStore>(
+            await File.ReadAllBytesAsync(trustStorePath), JsonOptions())
+            ?? throw new ArgumentException("Compatibility trust store is empty.");
+        var ring = new CompatibilityVerificationKeyRing(source.Keys.Select(key =>
+            new CompatibilityVerificationKey(key.KeyId,
+                Convert.FromHexString(key.PublicKeyHex),
+                DateTimeOffset.FromUnixTimeSeconds(key.NotBeforeUnix),
+                DateTimeOffset.FromUnixTimeSeconds(key.NotAfterUnix), key.Revoked)));
+        CompatibilityManifestClaims claims = CompatibilityManifestSigner.Verify(signed, ring,
+            DateTimeOffset.UtcNow);
+        if (!uint.TryParse(protocolText, out uint protocol))
+            throw new ArgumentException("Protocol version is invalid.");
+        CompatibilityDecision decision = CompatibilityEvaluator.Evaluate(claims,
+            ParseProduct(productText), version, protocol, DateTimeOffset.UtcNow);
+        await output.WriteLineAsync(JsonSerializer.Serialize(new
+        {
+            state = decision.State.ToString(),
+            reason = decision.PublicReason,
+            recommendedVersion = decision.RecommendedVersion,
+            manifestRevision = decision.ManifestRevision,
+            allowsNewProtectedSession = decision.AllowsNewProtectedSession
+        }, new JsonSerializerOptions { WriteIndented = true }));
+        return decision.AllowsNewProtectedSession ? 0 : 3;
+    }
+
+    private static CertaelProduct ParseProduct(string value) =>
+        Enum.TryParse(value, true, out CertaelProduct product) && Enum.IsDefined(product)
+            ? product : throw new ArgumentException("Certael product is invalid.");
+
+    private static JsonSerializerOptions JsonOptions() => new()
+    {
+        PropertyNameCaseInsensitive = true,
+        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower
+    };
 
     private static async Task WriteExclusive(string path, byte[] content, bool privateMaterial)
     {
@@ -219,8 +312,11 @@ internal static class CertaelCli
         error.WriteLine("usage: certaelctl rules validate <pack.yaml>");
         error.WriteLine("       certaelctl rules sign <pack.yaml> <private.pem> <key-id> <output.json>");
         error.WriteLine("       certaelctl manifest generate <root> <output.json>");
-        error.WriteLine("       certaelctl agent-build request <root> <tenant> <game> <environment> <build> <expires-at> <reason> <output.json>");
+        error.WriteLine("       certaelctl agent-build request <root> <tenant> <game> <environment> <build> <godot|unity|unreal|native> <adapter-version> <core-sdk-version> <expires-at> <reason> <output.json>");
         error.WriteLine("       certaelctl agent-key generate-development <key-id> <private.key> <trust-store.json>");
+        error.WriteLine("       certaelctl compatibility generate-development-key <key-id> <private.key> <trust-store.json>");
+        error.WriteLine("       certaelctl compatibility sign <source.json> <private.key> <key-id> <output.pb>");
+        error.WriteLine("       certaelctl compatibility check <signed.pb> <trust-store.json> <product> <version> <protocol>");
         error.WriteLine("       certaelctl doctor");
         return 1;
     }
@@ -233,5 +329,24 @@ internal sealed record BuildManifest(int Version, string Algorithm, IReadOnlyLis
 internal sealed record BuildFile(string Path, long Size, string Digest);
 internal sealed record AgentBuildRequest(string TenantId, string GameId, string EnvironmentId,
     string BuildId, string Reason, IReadOnlyList<AgentBuildFile> Files,
-    DateTimeOffset ExpiresAt);
+    DateTimeOffset ExpiresAt, string CoreSdkVersion, string EngineAdapter,
+    string EngineAdapterVersion, uint CoreCAbiVersion, uint ActionProtocolVersion,
+    uint AgentProtocolVersion, uint AgentProbeAbiVersion);
 internal sealed record AgentBuildFile(string Path, ulong Size, byte[] Sha256);
+internal sealed record CompatibilitySource(uint SchemaVersion, ulong Revision,
+    DateTimeOffset IssuedAt, DateTimeOffset ExpiresAt,
+    IReadOnlyList<CompatibilityProductSource> Products,
+    IReadOnlyList<CompatibilityRevocationSource> Revocations);
+internal sealed record CompatibilityProductSource(string Product,
+    string MinimumSupportedVersion, string RecommendedVersion,
+    uint MinimumProtocolVersion, uint MaximumProtocolVersion);
+internal sealed record CompatibilityRevocationSource(string Product, string Version,
+    DateTimeOffset EffectiveAt, string Reason);
+internal sealed record CompatibilityTrustStore(
+    [property: JsonPropertyName("keys")] IReadOnlyList<CompatibilityTrustKey> Keys);
+internal sealed record CompatibilityTrustKey(
+    [property: JsonPropertyName("key_id")] string KeyId,
+    [property: JsonPropertyName("public_key_hex")] string PublicKeyHex,
+    [property: JsonPropertyName("not_before_unix")] long NotBeforeUnix,
+    [property: JsonPropertyName("not_after_unix")] long NotAfterUnix,
+    [property: JsonPropertyName("revoked")] bool Revoked);

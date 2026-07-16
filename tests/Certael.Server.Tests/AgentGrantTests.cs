@@ -83,7 +83,8 @@ public sealed class AgentGrantTests
         var signer = new AgentGrantSigner(key, "agent-key-1");
         var manifestClaims = new AgentBuildManifestClaims(1, "build-manifest", "tenant",
             "game", "prod", "build", [new("bin/game.exe", 42, new byte[32])],
-            now, now.AddDays(30));
+            now, now.AddDays(30), "0.3.0-alpha.1", "native", "0.3.0-alpha.1",
+            1, 1, 1, 1);
         SignedAgentBuildManifest manifest = signer.IssueBuildManifest(manifestClaims, now);
         Assert.True(SignatureAlgorithm.Ed25519.Verify(key.PublicKey,
             "certael.agent.build-manifest.v1\0"u8.ToArray().Concat(manifest.Claims).ToArray(),
@@ -108,7 +109,8 @@ public sealed class AgentGrantTests
         var signer = new AgentGrantSigner(key, "key");
         AgentBuildManifestClaims Base(IReadOnlyList<ProtectedAgentBuildFile> files) =>
             new(1, "manifest", "tenant", "game", "prod", "build", files, now,
-                now.AddDays(1));
+                now.AddDays(1), "0.3.0-alpha.1", "native", "0.3.0-alpha.1",
+                1, 1, 1, 1);
         Assert.Throws<ArgumentException>(() => signer.IssueBuildManifest(
             Base([new("../game", 1, new byte[32])]), now));
         Assert.Throws<ArgumentException>(() => signer.IssueBuildManifest(Base([

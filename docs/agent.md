@@ -93,7 +93,8 @@ with a signed whole-build manifest. Generate the bounded registration request:
 
 ```bash
 dotnet run --project cli/Certael.Cli -- agent-build request \
-  ./export tenant game production BUILD_ID 2027-01-01T00:00:00Z release \
+  ./export tenant game production BUILD_ID godot 0.3.0-alpha.1 \
+  0.3.0-alpha.1 2027-01-01T00:00:00Z release \
   agent-build-request.json
 ```
 
@@ -106,6 +107,11 @@ manifest. Core returns the stored manifest and binds its digest into the launch
 grant. The Agent hashes every listed file before protected admission and fails
 closed if a file is missing, added to the manifest incorrectly, resized, or
 changed. Use `/v1/admin/agent-builds/revoke` to stop new admissions.
+
+Starting with `v0.3.0-alpha.1`, that signed manifest also binds the Core SDK,
+engine adapter and adapter version, C ABI, action protocol, Agent protocol, and
+probe ABI. Core refuses to register an unsupported combination. Regenerate
+manifests produced by earlier alphas; the new Agent intentionally rejects them.
 
 Build approvals created before manifest support cannot authorize protected
 launch. Re-register each pre-1.0 build with the generated file list after

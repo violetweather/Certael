@@ -1,0 +1,44 @@
+syntax = "proto3";
+
+package certael.compatibility.v1;
+
+enum CertaelProductV1 {
+  CERTAEL_PRODUCT_UNSPECIFIED = 0;
+  CERTAEL_PRODUCT_CORE = 1;
+  CERTAEL_PRODUCT_AGENT = 2;
+  CERTAEL_PRODUCT_GODOT_ADAPTER = 3;
+  CERTAEL_PRODUCT_UNITY_ADAPTER = 4;
+  CERTAEL_PRODUCT_UNREAL_ADAPTER = 5;
+  CERTAEL_PRODUCT_DOTNET_SERVER_SDK = 6;
+  CERTAEL_PRODUCT_NATIVE_SERVER_SDK = 7;
+}
+
+message CompatibilityProductRuleV1 {
+  CertaelProductV1 product = 1;
+  string minimum_supported_version = 2;
+  string recommended_version = 3;
+  uint32 minimum_protocol_version = 4;
+  uint32 maximum_protocol_version = 5;
+}
+
+message CompatibilityRevocationV1 {
+  CertaelProductV1 product = 1;
+  string version = 2;
+  int64 effective_at_unix = 3;
+  string reason = 4;
+}
+
+message CompatibilityManifestClaimsV1 {
+  uint32 schema_version = 1;
+  uint64 revision = 2;
+  int64 issued_at_unix = 3;
+  int64 expires_at_unix = 4;
+  repeated CompatibilityProductRuleV1 products = 5;
+  repeated CompatibilityRevocationV1 revocations = 6;
+}
+
+message SignedCompatibilityManifestV1 {
+  bytes claims = 1;
+  bytes signature = 2;
+  string key_id = 3;
+}
