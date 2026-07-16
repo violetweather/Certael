@@ -2,6 +2,7 @@
 #include "certael_agent_codec.h"
 
 #include <godot_cpp/classes/project_settings.hpp>
+#include <godot_cpp/variant/utility_functions.hpp>
 #include <godot_cpp/classes/os.hpp>
 #include <godot_cpp/classes/time.hpp>
 #include <godot_cpp/core/class_db.hpp>
@@ -193,13 +194,25 @@ bool CertaelNative::load_agent_library(const String& requested_path) {
 }
 
 bool CertaelNative::read_agent_message(uint8_t& type, PackedByteArray& payload) {
-    if (agent_channel_ == nullptr || channel_read_ == nullptr) return false;
+    agent_channel_detail_ = "AGENT_CHANNEL_OK";
+    if (agent_channel_ == nullptr || channel_read_ == nullptr) {
+        agent_channel_detail_ = "AGENT_CHANNEL_NOT_CONNECTED";
+        return false;
+    }
     size_t required = 0;
     uint8_t initial_type = 0;
     const certael_probe_result first = channel_read_(agent_channel_, &initial_type,
         nullptr, 0, &required);
-    if (first != CERTAEL_PROBE_BUFFER_TOO_SMALL || required == 0
-        || required > certael::agent::kMaximumFrameSize) return false;
+    if (first != CERTAEL_PROBE_BUFFER_TOO_SMALL) {
+        agent_channel_detail_ = first == CERTAEL_PROBE_NOT_CONNECTED
+            ? "AGENT_CHANNEL_CLOSED" : first == CERTAEL_PROBE_INVALID_FRAME
+            ? "AGENT_CHANNEL_FRAME_INVALID" : "AGENT_CHANNEL_READ_FAILED";
+        return false;
+    }
+    if (required == 0 || required > certael::agent::kMaximumFrameSize) {
+        agent_channel_detail_ = "AGENT_CHANNEL_LENGTH_INVALID";
+        return false;
+    }
     payload.resize(static_cast<int64_t>(required));
     size_t written = 0;
     uint8_t confirmed_type = 0;
@@ -207,6 +220,9 @@ bool CertaelNative::read_agent_message(uint8_t& type, PackedByteArray& payload) 
         payload.ptrw(), required, &written);
     if (second != CERTAEL_PROBE_OK || written != required || confirmed_type != initial_type) {
         payload.clear();
+        agent_channel_detail_ = second == CERTAEL_PROBE_NOT_CONNECTED
+            ? "AGENT_CHANNEL_CLOSED" : second == CERTAEL_PROBE_INVALID_FRAME
+            ? "AGENT_CHANNEL_FRAME_INVALID" : "AGENT_CHANNEL_READ_INCOMPLETE";
         return false;
     }
     type = confirmed_type;
@@ -269,20 +285,38 @@ bool CertaelNative::agent_bind_launch_bundle(const PackedByteArray& signed_polic
         agent_error_ = "AGENT_LAUNCH_BUNDLE_INVALID";
         return false;
     }
+    UtilityFunctions::print_verbose(String("Certael Agent admission: game_pid=")
+        + String::num_int64(OS::get_singleton()->get_process_id()) + " build_id="
+        + String(agent_hello_.get("build_id", "unknown")) + " payload_bytes="
+        + String::num_int64(static_cast<int64_t>(encoded.size())));
     const certael_probe_result status = channel_write_(agent_channel_, kLaunchGrant,
         encoded.data(), encoded.size());
     std::fill(encoded.begin(), encoded.end(), 0);
     if (status != CERTAEL_PROBE_OK) {
-        mark_agent_lost("AGENT_CHANNEL_LOST");
+        mark_agent_lost(status == CERTAEL_PROBE_NOT_CONNECTED
+            ? "AGENT_ADMISSION_CHANNEL_CLOSED" : "AGENT_ADMISSION_WRITE_FAILED");
         return false;
     }
     PackedByteArray health;
     uint8_t type = 0;
-    std::string health_state;
-    if (!read_agent_message(type, health) || type != kAgentHealth
-        || !certael::agent::decode_health_state_v1(health.ptr(), health.size(), health_state)
-        || health_state != "ready") {
-        mark_agent_lost("AGENT_HEALTH_INVALID");
+    if (!read_agent_message(type, health)) {
+        mark_agent_lost(agent_channel_detail_ == "AGENT_CHANNEL_CLOSED"
+            ? "AGENT_ADMISSION_CHANNEL_CLOSED" : agent_channel_detail_);
+        return false;
+    }
+    if (type != kAgentHealth) {
+        mark_agent_lost("AGENT_ADMISSION_RESPONSE_TYPE_INVALID");
+        return false;
+    }
+    certael::agent::HealthV1 admission;
+    if (!certael::agent::decode_health_v1(health.ptr(), health.size(), admission)) {
+        mark_agent_lost("AGENT_ADMISSION_HEALTH_NONCANONICAL");
+        return false;
+    }
+    if (admission.state != "ready") {
+        mark_agent_lost(admission.public_reasons.empty()
+            ? "AGENT_ADMISSION_REJECTED"
+            : String::utf8(admission.public_reasons.front().c_str()));
         return false;
     }
     agent_state_ = "protected";

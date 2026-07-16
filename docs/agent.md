@@ -93,8 +93,8 @@ with a signed whole-build manifest. Generate the bounded registration request:
 
 ```bash
 dotnet run --project cli/Certael.Cli -- agent-build request \
-  ./export tenant game production BUILD_ID godot 0.3.0-alpha.1 \
-  0.3.0-alpha.1 2027-01-01T00:00:00Z release \
+  ./export tenant game production BUILD_ID godot 0.3.0-alpha.2 \
+  0.3.0-alpha.2 2027-01-01T00:00:00Z release \
   agent-build-request.json
 ```
 
@@ -163,5 +163,19 @@ They do not sign policies, decide whether reports are honest, call account-ban A
 - `required`: protected-mode admission fails when launch verification fails; loss after admission enters the configured grace period and then restricts the session.
 - `optional`: health loss records advisory evidence but does not independently reject gameplay.
 - `disabled`: the game does not require Agent evidence; offline play remains available.
+
+Core `v0.3.0-alpha.1` adapters incorrectly required the protobuf
+`last_report_at_unix` field in the initial Agent health message. Canonical
+protobuf omits that scalar when its value is zero, so a valid initial `ready`
+message could surface as `AGENT_HEALTH_INVALID`. Upgrade the complete engine
+package to Core `v0.3.0-alpha.2` or newer; do not replace only one native
+library. Agent `v0.3.0-alpha.3` also sends a bounded rejection health response
+before closing admission, allowing current adapters to distinguish update,
+registration, manifest, build, and local-channel failures.
+
+Godot projects should keep one `CertaelClient` autoload for the process lifetime.
+Its `initialize()` method is idempotent in `v0.3.0-alpha.2`; repeatedly creating
+native clients or mixing adapter/probe binaries from different archives is not
+a supported connection model.
 
 An accepted report only proves that the admitted Agent key signed the expected bounded report chain. User-mode evidence can be bypassed on a fully controlled machine and cannot independently punish an account.

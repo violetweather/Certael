@@ -7,6 +7,10 @@ signal agent_health_changed(state: String, public_reason: String)
 var _native: Object
 
 func initialize() -> bool:
+	# Keep one native channel owner for the lifetime of this client. Replacing a
+	# live RefCounted instance closes its inherited Agent pipe.
+	if _native != null:
+		return true
 	if not ClassDB.class_exists("CertaelNative"):
 		push_error("Certael native GDExtension is missing for this export platform")
 		return false

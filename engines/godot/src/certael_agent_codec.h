@@ -19,6 +19,13 @@ struct HelloV1 {
     std::vector<std::uint8_t> executable_sha256;
 };
 
+struct HealthV1 {
+    std::string agent_session_id;
+    std::string state;
+    std::uint64_t last_report_at_unix = 0;
+    std::vector<std::string> public_reasons;
+};
+
 inline bool read_varint(const std::uint8_t* input, std::size_t size,
     std::size_t& offset, std::uint64_t& value) {
     const std::size_t start = offset;
@@ -63,24 +70,51 @@ inline bool safe_identifier(const std::vector<std::uint8_t>& value, std::size_t 
     return true;
 }
 
-inline bool decode_health_state_v1(const std::uint8_t* input, std::size_t size,
-    std::string& state) {
+inline bool decode_health_v1(const std::uint8_t* input, std::size_t size,
+    HealthV1& output) {
     if (input == nullptr || size == 0 || size > kMaximumFrameSize) return false;
     std::size_t offset = 0;
     std::vector<std::uint8_t> session;
     std::vector<std::uint8_t> state_bytes;
-    std::uint64_t key = 0, timestamp = 0;
+    std::uint64_t timestamp = 0;
     if (!read_bytes_field(input, size, offset, 1, 128, session)
         || !read_bytes_field(input, size, offset, 2, 32, state_bytes)
-        || !read_varint(input, size, offset, key) || key != (3u << 3)
-        || !read_varint(input, size, offset, timestamp)
         || !safe_identifier(session, 128) || !safe_identifier(state_bytes, 32)) return false;
+
+    // Prost correctly omits scalar fields containing their protobuf default.
+    // A freshly admitted session has last_report_at_unix == 0, so field 3 is
+    // absent from the canonical ready message. If field 3 is present, reject a
+    // zero value because re-encoding with prost would omit it.
+    if (offset < size) {
+        const std::size_t field_offset = offset;
+        std::uint64_t key = 0;
+        if (!read_varint(input, size, offset, key)) return false;
+        if (key == (3u << 3)) {
+            if (!read_varint(input, size, offset, timestamp) || timestamp == 0) return false;
+        } else {
+            offset = field_offset;
+        }
+    }
+
+    HealthV1 decoded;
+    decoded.agent_session_id.assign(session.begin(), session.end());
+    decoded.state.assign(state_bytes.begin(), state_bytes.end());
+    decoded.last_report_at_unix = timestamp;
     while (offset < size) {
         std::vector<std::uint8_t> reason;
         if (!read_bytes_field(input, size, offset, 4, 128, reason)
             || !safe_identifier(reason, 128)) return false;
+        decoded.public_reasons.emplace_back(reason.begin(), reason.end());
     }
-    state.assign(state_bytes.begin(), state_bytes.end());
+    output = std::move(decoded);
+    return true;
+}
+
+inline bool decode_health_state_v1(const std::uint8_t* input, std::size_t size,
+    std::string& state) {
+    HealthV1 health;
+    if (!decode_health_v1(input, size, health)) return false;
+    state = std::move(health.state);
     return true;
 }
 

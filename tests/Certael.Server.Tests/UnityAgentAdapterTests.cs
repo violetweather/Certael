@@ -39,6 +39,9 @@ public sealed class UnityAgentAdapterTests
     {
         Assert.Equal("ready", AgentHealthCodec.DecodeState([
             0x0a, 0x07, (byte)'s', (byte)'e', (byte)'s', (byte)'s', (byte)'i', (byte)'o', (byte)'n',
+            0x12, 0x05, (byte)'r', (byte)'e', (byte)'a', (byte)'d', (byte)'y']));
+        Assert.Throws<InvalidOperationException>(() => AgentHealthCodec.DecodeState([
+            0x0a, 0x07, (byte)'s', (byte)'e', (byte)'s', (byte)'s', (byte)'i', (byte)'o', (byte)'n',
             0x12, 0x05, (byte)'r', (byte)'e', (byte)'a', (byte)'d', (byte)'y', 0x18, 0x00]));
     }
 

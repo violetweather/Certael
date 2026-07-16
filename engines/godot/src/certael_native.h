@@ -23,6 +23,7 @@ class CertaelNative : public RefCounted {
     Dictionary agent_hello_;
     String agent_state_ = "disconnected";
     String agent_error_ = "AGENT_NOT_CONNECTED";
+    String agent_channel_detail_ = "AGENT_CHANNEL_OK";
     void close_agent_channel();
     void unload_agent_library();
     bool load_agent_library(const String& path);

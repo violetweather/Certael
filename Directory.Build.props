@@ -8,6 +8,6 @@
     <Deterministic>true</Deterministic>
     <ContinuousIntegrationBuild Condition="'$(CI)' == 'true'">true</ContinuousIntegrationBuild>
     <VersionPrefix>0.3.0</VersionPrefix>
-    <VersionSuffix>alpha.1</VersionSuffix>
+    <VersionSuffix>alpha.2</VersionSuffix>
   </PropertyGroup>
 </Project>

@@ -209,8 +209,17 @@ internal static class AgentHealthCodec
         int offset = 0;
         byte[] session = Bytes(input, ref offset, 1, 128);
         byte[] state = Bytes(input, ref offset, 2, 32);
-        if (Varint(input, ref offset) != 24) throw Invalid();
-        _ = Varint(input, ref offset);
+        if (offset < input.Length)
+        {
+            int fieldOffset = offset;
+            ulong key = Varint(input, ref offset);
+            if (key == 24)
+            {
+                // Canonical protobuf omits a scalar whose value is zero.
+                if (Varint(input, ref offset) == 0) throw Invalid();
+            }
+            else offset = fieldOffset;
+        }
         while (offset < input.Length) _ = Bytes(input, ref offset, 4, 128);
         string sessionText = Utf8(session), stateText = Utf8(state);
         if (!Safe(sessionText) || !Safe(stateText)) throw Invalid();
