@@ -1589,7 +1589,7 @@ file sealed record AgentBuildConfiguration(
 
 file static class CertaelRelease
 {
-    public const string ProductVersion = "0.3.0-alpha.1";
+    public const string ProductVersion = "0.3.0-alpha.2";
     public const uint ActionProtocolVersion = 1;
 }
 

@@ -76,9 +76,17 @@ inline bool DecodeHealthState(const TArray<uint8>& Input, FString& State) {
     uint64 Key = 0, Timestamp = 0;
     if (!ReadBytes(Input, Offset, 1, 128, Session)
         || !ReadBytes(Input, Offset, 2, 32, StateBytes)
-        || !ReadVarint(Input, Offset, Key) || Key != (3u << 3)
-        || !ReadVarint(Input, Offset, Timestamp)
         || !SafeIdentifier(Session, 128) || !SafeIdentifier(StateBytes, 32)) return false;
+    if (Offset < Input.Num()) {
+        const int32 FieldOffset = Offset;
+        if (!ReadVarint(Input, Offset, Key)) return false;
+        if (Key == (3u << 3)) {
+            // Canonical protobuf omits a scalar whose value is zero.
+            if (!ReadVarint(Input, Offset, Timestamp) || Timestamp == 0) return false;
+        } else {
+            Offset = FieldOffset;
+        }
+    }
     while (Offset < Input.Num()) {
         if (!ReadBytes(Input, Offset, 4, 128, Reason)
             || !SafeIdentifier(Reason, 128)) return false;

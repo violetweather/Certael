@@ -46,9 +46,27 @@ int main() {
 
     const std::vector<std::uint8_t> health {
         0x0a, 0x07, 's', 'e', 's', 's', 'i', 'o', 'n',
-        0x12, 0x05, 'r', 'e', 'a', 'd', 'y', 0x18, 0x00};
+        0x12, 0x05, 'r', 'e', 'a', 'd', 'y'};
     std::string health_state;
     assert(certael::agent::decode_health_state_v1(
         health.data(), health.size(), health_state));
     assert(health_state == "ready");
+
+    auto noncanonical_health = health;
+    noncanonical_health.push_back(0x18);
+    noncanonical_health.push_back(0x00);
+    assert(!certael::agent::decode_health_state_v1(
+        noncanonical_health.data(), noncanonical_health.size(), health_state));
+
+    auto rejected = health;
+    rejected.resize(9);
+    rejected.insert(rejected.end(), {0x12, 0x08, 'r', 'e', 'j', 'e', 'c', 't', 'e', 'd',
+        0x22, 0x15, 'A', 'G', 'E', 'N', 'T', '_', 'B', 'U', 'N', 'D', 'L', 'E', '_',
+        'R', 'E', 'J', 'E', 'C', 'T', 'E', 'D'});
+    certael::agent::HealthV1 rejected_health;
+    assert(certael::agent::decode_health_v1(
+        rejected.data(), rejected.size(), rejected_health));
+    assert(rejected_health.state == "rejected");
+    assert(rejected_health.public_reasons.size() == 1);
+    assert(rejected_health.public_reasons[0] == "AGENT_BUNDLE_REJECTED");
 }
