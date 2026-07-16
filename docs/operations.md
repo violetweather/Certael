@@ -28,6 +28,8 @@ the separate `agent-policies:create`, `agent-policies:approve`,
 authoritative game server the policy-administration scopes.
 Build-release operators use `agent-builds:register` and `agent-builds:revoke`;
 these scopes must remain separate from ordinary game-server identities.
+Support operators use `compatibility:read`. Compatibility signing is an
+offline release-security operation and is never an online API scope.
 
 Rule-pack and protection-profile administration additionally uses:
 
@@ -88,6 +90,11 @@ was changed in place. Promote new behavior with a new policy ID through the
 authenticated approval endpoints instead of editing an existing policy.
 Production also requires at least one `Agent:ApprovedBuilds` entry. Unknown and
 revoked build IDs fail closed before Core signs an Agent launch grant.
+Production also requires `Compatibility:SignedManifestPath` and at least one
+time-bounded `Compatibility:TrustedKeys` entry. See
+[version support and withdrawals](compatibility.md). New protected sessions
+fail closed when policy is expired or unverifiable; admitted sessions continue
+until their normal expiry or an explicit revocation.
 
 For an overlapping rotation, configure `Signing:Keys` entries with `KeyId`,
 `PemPath`, `NotBefore`, `NotAfter`, `Usage=ticket-signing`, optional tenant and

@@ -10,10 +10,13 @@ public static class CertaelTelemetry
     public static readonly Meter Meter = new(SourceName);
     public static readonly Counter<long> Actions = Meter.CreateCounter<long>("certael.actions");
     public static readonly Counter<long> SessionOperations = Meter.CreateCounter<long>("certael.session.operations");
+    public static readonly Counter<long> CompatibilityDecisions = Meter.CreateCounter<long>(
+        "certael.compatibility.decisions");
     public static readonly Histogram<double> ActionMilliseconds = Meter.CreateHistogram<double>("certael.action.duration", "ms");
 
     public static void RecordAction(string tenantId, string gameId, string environmentId,
-        string buildId, string actionType, string outcome, string publicReason, double milliseconds) {
+        string buildId, string actionType, string outcome, string publicReason, double milliseconds)
+    {
         TagList tags = default;
         tags.Add("certael.tenant", tenantId); tags.Add("certael.game", gameId);
         tags.Add("certael.environment", environmentId); tags.Add("certael.action_type", actionType);
@@ -29,5 +32,15 @@ public static class CertaelTelemetry
         tags.Add("certael.operation", operation); tags.Add("certael.outcome", outcome);
         tags.Add("certael.tenant", tenantId); tags.Add("certael.environment", environmentId);
         SessionOperations.Add(1, tags);
+    }
+
+    public static void RecordCompatibility(string product, string version, string state,
+        string reason, ulong revision)
+    {
+        TagList tags = default;
+        tags.Add("certael.product", product); tags.Add("certael.version", version);
+        tags.Add("certael.compatibility_state", state); tags.Add("certael.public_reason", reason);
+        tags.Add("certael.manifest_revision", checked((long)revision));
+        CompatibilityDecisions.Add(1, tags);
     }
 }

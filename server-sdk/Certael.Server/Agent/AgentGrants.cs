@@ -26,7 +26,10 @@ public sealed record ProtectedAgentBuildFile(string Path, ulong Size, byte[] Sha
 public sealed record AgentBuildManifestClaims(
     uint ProtocolVersion, string ManifestId, string TenantId, string GameId,
     string EnvironmentId, string BuildId, IReadOnlyList<ProtectedAgentBuildFile> Files,
-    DateTimeOffset NotBefore, DateTimeOffset ExpiresAt);
+    DateTimeOffset NotBefore, DateTimeOffset ExpiresAt,
+    string CoreSdkVersion, string EngineAdapter, string EngineAdapterVersion,
+    uint CoreCAbiVersion, uint ActionProtocolVersion, uint AgentProtocolVersion,
+    uint AgentProbeAbiVersion);
 
 public sealed record SignedAgentBuildManifest(byte[] Claims, byte[] Signature, string KeyId);
 
@@ -171,7 +174,11 @@ public sealed class AgentGrantSigner
             || claims.Files.Count is < 1 or > 16384
             || claims.NotBefore > now.AddSeconds(30) || claims.ExpiresAt <= now
             || claims.ExpiresAt <= claims.NotBefore
-            || claims.ExpiresAt - claims.NotBefore > TimeSpan.FromDays(400))
+            || claims.ExpiresAt - claims.NotBefore > TimeSpan.FromDays(400)
+            || !Version(claims.CoreSdkVersion) || !Identifier(claims.EngineAdapter)
+            || !Version(claims.EngineAdapterVersion) || claims.CoreCAbiVersion == 0
+            || claims.ActionProtocolVersion == 0 || claims.AgentProtocolVersion == 0
+            || claims.AgentProbeAbiVersion == 0)
             throw new ArgumentException("Agent build manifest is invalid.");
         var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (ProtectedAgentBuildFile file in claims.Files)
@@ -289,6 +296,13 @@ public static class AgentGrantCodec
         }
         VarintField(stream, 8, checked((ulong)value.NotBefore.ToUnixTimeSeconds()));
         VarintField(stream, 9, checked((ulong)value.ExpiresAt.ToUnixTimeSeconds()));
+        String(stream, 10, value.CoreSdkVersion);
+        String(stream, 11, value.EngineAdapter);
+        String(stream, 12, value.EngineAdapterVersion);
+        VarintField(stream, 13, value.CoreCAbiVersion);
+        VarintField(stream, 14, value.ActionProtocolVersion);
+        VarintField(stream, 15, value.AgentProtocolVersion);
+        VarintField(stream, 16, value.AgentProbeAbiVersion);
         byte[] encoded = stream.ToArray();
         if (encoded.Length > 64 * 1024)
             throw new ArgumentException("Agent build manifest exceeds 64 KiB.");

@@ -14,6 +14,7 @@ then add engine adapters and game-specific rules.
 6. Encode invariants using [custom game rules](rules.md).
 7. Configure the reusable [protection modules](protections.md).
 8. Complete the [production operations checklist](operations.md).
+9. Configure the signed [version support and withdrawal policy](compatibility.md).
 
 ## Reference
 
@@ -29,6 +30,7 @@ then add engine adapters and game-specific rules.
 | [Rules](rules.md) | gameplay and security engineers | YAML packs, callbacks, signing, rollout |
 | [Protections](protections.md) | gameplay and security engineers | rate, movement, visibility, economy, behavior, integrity |
 | [Operations](operations.md) | platform and SRE teams | identity, keys, persistence, rollout, privacy |
+| [Compatibility](compatibility.md) | release and security operators | supported versions, required updates, withdrawals, and build binding |
 | [Incident response](incident-response.md) | operators and security teams | containment, recovery, and disclosure runbooks |
 | [Release process](releasing.md) | maintainers | signed pre-release artifacts and provenance |
 | [Troubleshooting](troubleshooting.md) | all integrators | common setup and runtime failures |

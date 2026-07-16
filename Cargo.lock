@@ -25,7 +25,7 @@ checksum = "72f5acc6cb2ba439de613abc23857ec3d78374d8ed5ac84e9d11336e87da8649"
 
 [[package]]
 name = "certael-c-api"
-version = "0.1.0"
+version = "0.3.0-alpha.1"
 dependencies = [
  "certael-core",
  "uuid",
@@ -33,7 +33,7 @@ dependencies = [
 
 [[package]]
 name = "certael-core"
-version = "0.1.0"
+version = "0.3.0-alpha.1"
 dependencies = [
  "ed25519-dalek",
  "rand_core",
@@ -46,7 +46,7 @@ dependencies = [
 
 [[package]]
 name = "certael-load"
-version = "0.1.0"
+version = "0.3.0-alpha.1"
 dependencies = [
  "certael-core",
  "ed25519-dalek",

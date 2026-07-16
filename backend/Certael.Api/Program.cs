@@ -18,7 +18,9 @@ using Certael.Server.Evidence;
 using Certael.Server.Configuration;
 using Certael.Server.Protections;
 using Certael.Server.Rules;
+using Certael.Server.Compatibility;
 using System.Text;
+using System.Text.Json;
 using OpenTelemetry.Logs;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
@@ -94,6 +96,8 @@ builder.Services.AddRateLimiter(options =>
         }));
 });
 builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddSingleton(sp => LoadCompatibilityGate(builder.Configuration,
+    builder.Environment, sp.GetRequiredService<TimeProvider>()));
 ConfigurePersistence(builder);
 string ticketIssuer = RequiredSetting(builder.Configuration, builder.Environment,
     "Signing:Issuer", "https://certael.local");
@@ -139,6 +143,49 @@ app.MapGet("/readyz", async (IServiceProvider services, CancellationToken cancel
         await redis.GetDatabase().PingAsync();
     return Results.Ok(new { status = "ready" });
 });
+app.MapGet("/v1/status/compatibility", (CompatibilityAdmissionGate compatibility) =>
+{
+    CompatibilityDecision decision = compatibility.Evaluate(CertaelProduct.Core,
+        CertaelRelease.ProductVersion, CertaelRelease.ActionProtocolVersion);
+    CertaelTelemetry.RecordCompatibility("core", CertaelRelease.ProductVersion,
+        decision.State.ToString(), decision.PublicReason, decision.ManifestRevision);
+    return Results.Ok(new
+    {
+        product = "core",
+        version = CertaelRelease.ProductVersion,
+        protocolVersion = CertaelRelease.ActionProtocolVersion,
+        state = decision.State.ToString(),
+        reason = decision.PublicReason,
+        recommendedVersion = decision.RecommendedVersion,
+        manifestRevision = decision.ManifestRevision,
+        manifestExpiresAt = compatibility.ExpiresAt,
+        allowsNewProtectedSession = decision.AllowsNewProtectedSession
+    });
+});
+app.MapPost("/v1/admin/compatibility/check", (CompatibilityCheckRequest request,
+    HttpContext http, CompatibilityAdmissionGate compatibility) =>
+{
+    IResult? denied = AuthorizeAdministration(http, "compatibility:read",
+        request.TenantId, request.EnvironmentId);
+    if (denied is not null) return denied;
+    if (!Enum.TryParse(request.Product, true, out CertaelProduct product)
+        || !Enum.IsDefined(product)) return Results.BadRequest(new { error = "INVALID_PRODUCT" });
+    CompatibilityDecision decision = compatibility.Evaluate(product, request.Version,
+        request.ProtocolVersion);
+    CertaelTelemetry.RecordCompatibility(request.Product, request.Version,
+        decision.State.ToString(), decision.PublicReason, decision.ManifestRevision);
+    return Results.Ok(new
+    {
+        product = product.ToString(),
+        request.Version,
+        request.ProtocolVersion,
+        state = decision.State.ToString(),
+        reason = decision.PublicReason,
+        recommendedVersion = decision.RecommendedVersion,
+        manifestRevision = decision.ManifestRevision,
+        allowsNewProtectedSession = decision.AllowsNewProtectedSession
+    });
+}).RequireAuthorization().RequireRateLimiting("administration");
 app.MapPost("/v1/sessions/redeem", async (
     RedeemTicketRequest request,
     BootstrapTicketValidator validator,
@@ -316,7 +363,8 @@ app.MapPost("/v1/sessions/tickets", (
 }).RequireAuthorization().RequireRateLimiting("service-operations");
 
 app.MapPost("/v1/agent/sessions", async (HttpContext http, AgentApiLifecycle lifecycle,
-    TimeProvider clock, CancellationToken cancellationToken) =>
+    CompatibilityAdmissionGate compatibility, TimeProvider clock,
+    CancellationToken cancellationToken) =>
 {
     try
     {
@@ -325,10 +373,22 @@ app.MapPost("/v1/agent/sessions", async (HttpContext http, AgentApiLifecycle lif
         IResult? denied = AuthorizeAgent(http, "agents:launch", request.TenantId,
             request.EnvironmentId, request.AuthoritativeServerId);
         if (denied is not null) return denied;
+        CompatibilityDecision coreDecision = compatibility.Evaluate(CertaelProduct.Core,
+            CertaelRelease.ProductVersion, CertaelRelease.ActionProtocolVersion);
+        CertaelTelemetry.RecordCompatibility("core", CertaelRelease.ProductVersion,
+            coreDecision.State.ToString(), coreDecision.PublicReason,
+            coreDecision.ManifestRevision);
+        if (!coreDecision.AllowsNewProtectedSession)
+            return CompatibilityDenied(coreDecision);
+        string minimumAgentVersion = request.MinimumAgentVersion;
+        CompatibilityProductRule? agentRule = compatibility.Rule(CertaelProduct.Agent);
+        if (agentRule is not null && SemanticVersion.Parse(minimumAgentVersion)
+            < SemanticVersion.Parse(agentRule.MinimumSupportedVersion))
+            minimumAgentVersion = agentRule.MinimumSupportedVersion;
         DateTimeOffset now = clock.GetUtcNow();
         var policy = new AgentPolicyClaims(1, request.PolicyId, request.TenantId, request.GameId,
             request.EnvironmentId, request.RequirementMode, request.HeartbeatSeconds,
-            request.ReportSeconds, request.DisconnectGraceSeconds, request.MinimumAgentVersion,
+            request.ReportSeconds, request.DisconnectGraceSeconds, minimumAgentVersion,
             now.AddSeconds(request.PolicyLifetimeSeconds));
         AgentLaunchBundle result = await lifecycle.LaunchAsync(new AgentLaunchParameters(
             request.TenantId, request.GameId, request.EnvironmentId, request.PlayerSubject,
@@ -338,7 +398,8 @@ app.MapPost("/v1/agent/sessions", async (HttpContext http, AgentApiLifecycle lif
         return Results.Bytes(AgentApiCodec.EncodeLaunchResponse(result), AgentApiCodec.ContentType);
     }
     catch (Exception exception) when (exception is AgentApiException or ArgumentException
-        or OverflowException or AgentPolicyLifecycleException or AgentBuildRegistryException)
+        or FormatException or OverflowException or AgentPolicyLifecycleException
+        or AgentBuildRegistryException)
     { return Results.BadRequest(); }
 }).RequireAuthorization().RequireRateLimiting("service-operations");
 
@@ -506,7 +567,7 @@ app.MapPost("/v1/admin/privacy/delete-player", async (PlayerDeletionRequest requ
 
 app.MapPost("/v1/admin/agent-builds", async (AgentBuildMutationRequest request,
     HttpContext http, IAgentBuildAdministration builds, AgentGrantSigner signer,
-    TimeProvider clock, IAuditStore audit,
+    CompatibilityAdmissionGate compatibility, TimeProvider clock, IAuditStore audit,
     CancellationToken cancellationToken) =>
 {
     IResult? denied = AuthorizeAdministration(http, "agent-builds:register",
@@ -516,29 +577,50 @@ app.MapPost("/v1/admin/agent-builds", async (AgentBuildMutationRequest request,
     string subject = http.User.FindFirstValue("sub") ?? "unknown";
     try
     {
+        CompatibilityDecision sdkDecision = compatibility.Evaluate(CertaelProduct.Core,
+            request.CoreSdkVersion, request.ActionProtocolVersion);
+        CompatibilityDecision adapterDecision = compatibility.Evaluate(
+            AdapterProduct(request.EngineAdapter), request.EngineAdapterVersion,
+            request.AgentProtocolVersion);
+        CertaelTelemetry.RecordCompatibility("core-sdk", request.CoreSdkVersion,
+            sdkDecision.State.ToString(), sdkDecision.PublicReason,
+            sdkDecision.ManifestRevision);
+        CertaelTelemetry.RecordCompatibility(request.EngineAdapter,
+            request.EngineAdapterVersion, adapterDecision.State.ToString(),
+            adapterDecision.PublicReason, adapterDecision.ManifestRevision);
+        if (!sdkDecision.AllowsNewProtectedSession) return CompatibilityDenied(sdkDecision);
+        if (!adapterDecision.AllowsNewProtectedSession)
+            return CompatibilityDenied(adapterDecision);
         DateTimeOffset now = clock.GetUtcNow();
         var claims = new AgentBuildManifestClaims(1, Guid.NewGuid().ToString("N"),
             request.TenantId, request.GameId, request.EnvironmentId, request.BuildId,
             (request.Files ?? []).Select(file => new ProtectedAgentBuildFile(file.Path, file.Size,
-                file.Sha256)).ToArray(), now, request.ExpiresAt ?? now.AddDays(180));
+                file.Sha256)).ToArray(), now, request.ExpiresAt ?? now.AddDays(180),
+            request.CoreSdkVersion, request.EngineAdapter, request.EngineAdapterVersion,
+            request.CoreCAbiVersion, request.ActionProtocolVersion,
+            request.AgentProtocolVersion, request.AgentProbeAbiVersion);
         byte[] signedManifest = AgentGrantCodec.EncodeSignedBuildManifest(
             signer.IssueBuildManifest(claims, now));
         ApprovedAgentBuild registered = await builds.RegisterAsync(request.TenantId,
             request.GameId, request.EnvironmentId, request.BuildId, subject, signedManifest,
             cancellationToken);
-        await AuditAgentBuild(audit, http, request, "agent-build.register", true,
+        await AuditAgentBuild(audit, http, request.TenantId, request.GameId,
+            request.EnvironmentId, request.BuildId, request.Reason, "agent-build.register", true,
             cancellationToken);
         return Results.Created("/v1/admin/agent-builds", registered);
     }
-    catch (AgentBuildRegistryException)
+    catch (Exception exception) when (exception is AgentBuildRegistryException
+        or ArgumentException or FormatException)
     {
-        await AuditAgentBuild(audit, http, request, "agent-build.register", false,
+        await AuditAgentBuild(audit, http, request.TenantId, request.GameId,
+            request.EnvironmentId, request.BuildId, request.Reason, "agent-build.register", false,
             cancellationToken);
-        return Results.Conflict();
+        return exception is AgentBuildRegistryException ? Results.Conflict()
+            : Results.BadRequest(new { error = "INVALID_AGENT_BUILD" });
     }
 }).RequireAuthorization().RequireRateLimiting("administration");
 
-app.MapPost("/v1/admin/agent-builds/revoke", async (AgentBuildMutationRequest request,
+app.MapPost("/v1/admin/agent-builds/revoke", async (AgentBuildRevocationRequest request,
     HttpContext http, IAgentBuildAdministration builds, IAuditStore audit,
     CancellationToken cancellationToken) =>
 {
@@ -551,13 +633,15 @@ app.MapPost("/v1/admin/agent-builds/revoke", async (AgentBuildMutationRequest re
     {
         bool revoked = await builds.RevokeAsync(request.TenantId, request.GameId,
             request.EnvironmentId, request.BuildId, subject, cancellationToken);
-        await AuditAgentBuild(audit, http, request, "agent-build.revoke", revoked,
+        await AuditAgentBuild(audit, http, request.TenantId, request.GameId,
+            request.EnvironmentId, request.BuildId, request.Reason, "agent-build.revoke", revoked,
             cancellationToken);
         return revoked ? Results.NoContent() : Results.NotFound();
     }
     catch (AgentBuildRegistryException)
     {
-        await AuditAgentBuild(audit, http, request, "agent-build.revoke", false,
+        await AuditAgentBuild(audit, http, request.TenantId, request.GameId,
+            request.EnvironmentId, request.BuildId, request.Reason, "agent-build.revoke", false,
             cancellationToken);
         return Results.BadRequest();
     }
@@ -1099,6 +1183,102 @@ static string RequiredSetting(IConfiguration configuration, IHostEnvironment env
     : environment.IsDevelopment() ? developmentDefault
     : throw new InvalidOperationException($"{key} is required outside Development.");
 
+static CompatibilityAdmissionGate LoadCompatibilityGate(IConfiguration configuration,
+    IHostEnvironment environment, TimeProvider clock)
+{
+    string? manifestPath = configuration["Compatibility:SignedManifestPath"];
+    string? trustStorePath = configuration["Compatibility:TrustStorePath"];
+    IConfigurationSection[] configuredKeys = configuration
+        .GetSection("Compatibility:TrustedKeys").GetChildren().ToArray();
+    if (string.IsNullOrWhiteSpace(manifestPath)
+        || (string.IsNullOrWhiteSpace(trustStorePath) && configuredKeys.Length == 0))
+    {
+        if (!environment.IsDevelopment())
+            throw new InvalidOperationException(
+                "A signed Compatibility manifest and offline TrustedKeys are required outside Development.");
+        DateTimeOffset now = clock.GetUtcNow();
+        var development = new CompatibilityManifestClaims(1, 1, now.AddMinutes(-1),
+            now.AddHours(12),
+            Enum.GetValues<CertaelProduct>().Select(product =>
+                new CompatibilityProductRule(product, "0.2.0", CertaelRelease.ProductVersion,
+                    1, 1)).ToArray(), []);
+        return new CompatibilityAdmissionGate(development, clock);
+    }
+    IEnumerable<CompatibilityVerificationKey> loadedKeys;
+    if (!string.IsNullOrWhiteSpace(trustStorePath))
+    {
+        using JsonDocument document = JsonDocument.Parse(File.ReadAllBytes(trustStorePath));
+        loadedKeys = document.RootElement.GetProperty("keys").EnumerateArray().Select(item =>
+            new CompatibilityVerificationKey(
+                item.GetProperty("key_id").GetString()
+                    ?? throw new InvalidOperationException("Compatibility key ID is missing."),
+                Convert.FromHexString(item.GetProperty("public_key_hex").GetString()
+                    ?? throw new InvalidOperationException("Compatibility public key is missing.")),
+                DateTimeOffset.FromUnixTimeSeconds(
+                    item.GetProperty("not_before_unix").GetInt64()),
+                DateTimeOffset.FromUnixTimeSeconds(
+                    item.GetProperty("not_after_unix").GetInt64()),
+                item.GetProperty("revoked").GetBoolean())).ToArray();
+    }
+    else
+    {
+        loadedKeys = configuredKeys.Select(item =>
+        {
+            string keyId = item["KeyId"]
+                ?? throw new InvalidOperationException("Compatibility trust key requires KeyId.");
+            string publicKeyPath = item["PublicKeyPath"]
+                ?? throw new InvalidOperationException(
+                    $"Compatibility trust key {keyId} requires PublicKeyPath.");
+            if (!DateTimeOffset.TryParse(item["NotBefore"], out DateTimeOffset notBefore)
+                || !DateTimeOffset.TryParse(item["NotAfter"], out DateTimeOffset notAfter))
+                throw new InvalidOperationException(
+                    $"Compatibility trust key {keyId} has invalid validity bounds.");
+            return new CompatibilityVerificationKey(keyId, File.ReadAllBytes(publicKeyPath),
+                notBefore, notAfter, item.GetValue("Revoked", false));
+        }).ToArray();
+    }
+    var keys = new CompatibilityVerificationKeyRing(loadedKeys);
+    byte[] envelope = File.ReadAllBytes(manifestPath);
+    CompatibilityManifestClaims claims = CompatibilityManifestSigner.Verify(
+        CompatibilityManifestCodec.DecodeSigned(envelope), keys, clock.GetUtcNow());
+    ulong minimumRevision = configuration.GetValue<ulong>("Compatibility:MinimumRevision", 1);
+    if (claims.Revision < minimumRevision)
+        throw new InvalidOperationException(
+            "Signed compatibility manifest is below Compatibility:MinimumRevision.");
+    return new CompatibilityAdmissionGate(claims, clock);
+}
+
+static IResult CompatibilityDenied(CompatibilityDecision decision) => decision.State switch
+{
+    CompatibilityState.UpdateRequired => Results.Json(new
+    {
+        error = decision.PublicReason,
+        recommendedVersion = decision.RecommendedVersion,
+        manifestRevision = decision.ManifestRevision
+    }, statusCode: StatusCodes.Status426UpgradeRequired),
+    CompatibilityState.Revoked => Results.Json(new
+    {
+        error = decision.PublicReason,
+        recommendedVersion = decision.RecommendedVersion,
+        manifestRevision = decision.ManifestRevision
+    }, statusCode: StatusCodes.Status403Forbidden),
+    _ => Results.Json(new
+    {
+        error = decision.PublicReason,
+        recommendedVersion = decision.RecommendedVersion,
+        manifestRevision = decision.ManifestRevision
+    }, statusCode: StatusCodes.Status503ServiceUnavailable)
+};
+
+static CertaelProduct AdapterProduct(string value) => value.ToLowerInvariant() switch
+{
+    "godot" => CertaelProduct.GodotAdapter,
+    "unity" => CertaelProduct.UnityAdapter,
+    "unreal" => CertaelProduct.UnrealAdapter,
+    "native" => CertaelProduct.NativeServerSdk,
+    _ => throw new ArgumentException("Engine adapter is unsupported.")
+};
+
 static bool ValidReason(string value) => !string.IsNullOrWhiteSpace(value)
     && value.Length <= 512 && !value.Any(char.IsControl);
 
@@ -1245,19 +1425,19 @@ static string SafeAuditText(string value, int maximum = 128) =>
         && !value.Any(char.IsControl) ? value : "invalid";
 
 static ValueTask AuditAgentBuild(IAuditStore audit, HttpContext http,
-    AgentBuildMutationRequest request, string operation, bool succeeded,
+    string tenantId, string gameId, string environmentId, string buildId, string reason,
+    string operation, bool succeeded,
     CancellationToken cancellationToken)
 {
     string subject = http.User.FindFirstValue("sub") ?? "unknown";
-    string resource = string.Join('/', SafeAuditText(request.GameId),
-        SafeAuditText(request.BuildId));
+    string resource = string.Join('/', SafeAuditText(gameId), SafeAuditText(buildId));
     string? afterDigest = succeeded ? Convert.ToHexString(SHA256.HashData(
-        Encoding.UTF8.GetBytes(string.Join('|', SafeAuditText(request.TenantId),
-            SafeAuditText(request.EnvironmentId), SafeAuditText(request.GameId),
-            SafeAuditText(request.BuildId), operation)))).ToLowerInvariant() : null;
-    return audit.AppendAsync(new AuditEvent(Guid.NewGuid(), SafeAuditText(request.TenantId),
-        SafeAuditText(request.EnvironmentId), subject, operation, "agent-build", resource,
-        request.Reason, null, afterDigest, http.TraceIdentifier,
+        Encoding.UTF8.GetBytes(string.Join('|', SafeAuditText(tenantId),
+            SafeAuditText(environmentId), SafeAuditText(gameId),
+            SafeAuditText(buildId), operation)))).ToLowerInvariant() : null;
+    return audit.AppendAsync(new AuditEvent(Guid.NewGuid(), SafeAuditText(tenantId),
+        SafeAuditText(environmentId), subject, operation, "agent-build", resource,
+        reason, null, afterDigest, http.TraceIdentifier,
         DateTimeOffset.UtcNow, succeeded, http.Connection.RemoteIpAddress?.ToString(), subject),
         cancellationToken);
 }
@@ -1338,9 +1518,18 @@ public sealed record AgentPolicyCreateRequest(
 
 public sealed record AgentBuildMutationRequest(
     string TenantId, string GameId, string EnvironmentId, string BuildId, string Reason,
-    IReadOnlyList<AgentBuildFileRequest>? Files = null, DateTimeOffset? ExpiresAt = null);
+    string CoreSdkVersion, string EngineAdapter, string EngineAdapterVersion,
+    uint CoreCAbiVersion, uint ActionProtocolVersion, uint AgentProtocolVersion,
+    uint AgentProbeAbiVersion, IReadOnlyList<AgentBuildFileRequest>? Files = null,
+    DateTimeOffset? ExpiresAt = null);
+
+public sealed record AgentBuildRevocationRequest(string TenantId, string GameId,
+    string EnvironmentId, string BuildId, string Reason);
 
 public sealed record AgentBuildFileRequest(string Path, ulong Size, byte[] Sha256);
+
+public sealed record CompatibilityCheckRequest(string TenantId, string EnvironmentId,
+    string Product, string Version, uint ProtocolVersion);
 
 public sealed record AgentPolicyMutationRequest(
     string TenantId, string EnvironmentId, string Reason);
@@ -1397,5 +1586,11 @@ file sealed record AgentPolicyConfiguration(
 file sealed record AgentBuildConfiguration(
     string TenantId, string GameId, string EnvironmentId, string BuildId,
     byte[] SignedBuildManifest);
+
+file static class CertaelRelease
+{
+    public const string ProductVersion = "0.3.0-alpha.1";
+    public const uint ActionProtocolVersion = 1;
+}
 
 public partial class Program;

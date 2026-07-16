@@ -41,7 +41,7 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           repository: violetweather/Certael-Agent
-          ref: e92a77bc9d21816c8017330efb5a618f9af07c86
+          ref: b05c27afa71456a939f5618b3a0357f5a812aade
           path: certael-agent-source
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
@@ -61,7 +61,7 @@ jobs:
           cp LICENSE "artifacts/certael-native-${{ matrix.artifact }}/LICENSE"
           cp certael-agent-source/LICENSE "artifacts/certael-native-${{ matrix.artifact }}/CERTAEL_AGENT_LICENSE"
           printf '%s\n' "$GITHUB_SHA" > "artifacts/certael-native-${{ matrix.artifact }}/SOURCE_COMMIT"
-          printf '%s\n' 'e92a77bc9d21816c8017330efb5a618f9af07c86' > "artifacts/certael-native-${{ matrix.artifact }}/AGENT_SOURCE_COMMIT"
+          printf '%s\n' 'b05c27afa71456a939f5618b3a0357f5a812aade' > "artifacts/certael-native-${{ matrix.artifact }}/AGENT_SOURCE_COMMIT"
           cp compatibility/core-agent-v1.json "artifacts/certael-native-${{ matrix.artifact }}/"
           cp "target/${{ matrix.target }}/release/${{ matrix.library }}" "artifacts/certael-native-${{ matrix.artifact }}/lib/"
           if [[ "${{ runner.os }}" == "Windows" ]]; then
