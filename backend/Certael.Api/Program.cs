@@ -19,6 +19,9 @@ using Certael.Server.Configuration;
 using Certael.Server.Protections;
 using Certael.Server.Rules;
 using Certael.Server.Compatibility;
+using Certael.Server.Cases;
+using Certael.Server.Privacy;
+using Certael.Api;
 using System.Text;
 using System.Text.Json;
 using OpenTelemetry.Logs;
@@ -28,6 +31,13 @@ using OpenTelemetry.Trace;
 using NSec.Cryptography;
 
 WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
+if (builder.Environment.IsDevelopment() && OperatingSystem.IsWindows())
+{
+    // Development and test processes frequently run without permission to create
+    // Windows Event Log sources. Console logs preserve the startup exception.
+    builder.Logging.ClearProviders();
+    builder.Logging.AddSimpleConsole();
+}
 builder.Services.AddProblemDetails();
 builder.Services.AddHealthChecks();
 bool exportOtlp = !string.IsNullOrWhiteSpace(
@@ -162,6 +172,7 @@ app.MapGet("/v1/status/compatibility", (CompatibilityAdmissionGate compatibility
         allowsNewProtectedSession = decision.AllowsNewProtectedSession
     });
 });
+app.MapCaseEndpoints();
 app.MapPost("/v1/admin/compatibility/check", (CompatibilityCheckRequest request,
     HttpContext http, CompatibilityAdmissionGate compatibility) =>
 {
@@ -531,9 +542,31 @@ app.MapPost("/v1/admin/agent-policies", async (AgentPolicyCreateRequest request,
     }
 }).RequireAuthorization().RequireRateLimiting("administration");
 
+app.MapGet("/v1/admin/privacy/export-player", async (string tenantId,
+    string environmentId, string playerSubject, HttpContext http,
+    IPlayerDataPrivacyStore privacy, CancellationToken cancellationToken) =>
+{
+    IResult? denied = AuthorizeAdministration(http, "privacy:export", tenantId, environmentId);
+    if (denied is not null) return denied;
+    if (!ValidIdentifier(playerSubject))
+        return Results.BadRequest(new { error = "INVALID_EXPORT_REQUEST" });
+    http.Response.ContentType = "application/x-ndjson; charset=utf-8";
+    http.Response.Headers.ContentDisposition =
+        $"attachment; filename=\"certael-player-export-{DateTimeOffset.UtcNow:yyyyMMdd}.ndjson\"";
+    await foreach (string record in privacy.ExportNdjsonAsync(tenantId, environmentId,
+        playerSubject, cancellationToken))
+    {
+        await http.Response.WriteAsync(record, cancellationToken);
+        await http.Response.WriteAsync("\n", cancellationToken);
+        await http.Response.Body.FlushAsync(cancellationToken);
+    }
+    return Results.Empty;
+}).RequireAuthorization().RequireRateLimiting("administration");
+
 app.MapPost("/v1/admin/privacy/delete-player", async (PlayerDeletionRequest request,
     HttpContext http, IAgentSessionStore agentSessions, IEvidenceStore evidence,
-    IAuditStore audit, TimeProvider clock, CancellationToken cancellationToken) =>
+    IPlayerDataPrivacyStore privacy, IAuditStore audit, TimeProvider clock,
+    CancellationToken cancellationToken) =>
 {
     IResult? denied = AuthorizeAdministration(http, "privacy:delete",
         request.TenantId, request.EnvironmentId);
@@ -545,6 +578,8 @@ app.MapPost("/v1/admin/privacy/delete-player", async (PlayerDeletionRequest requ
     await evidence.DeletePlayerAsync(request.TenantId, request.EnvironmentId,
         request.PlayerSubject,
         cancellationToken);
+    PlayerCaseRedactionResult cases = await privacy.PseudonymizeCasesAsync(
+        request.TenantId, request.EnvironmentId, request.PlayerSubject, cancellationToken);
     DateTimeOffset now = clock.GetUtcNow();
     string operatorSubject = http.User.FindFirstValue("sub") ?? "unknown";
     string pseudonymousResource = Convert.ToHexString(SHA256.HashData(
@@ -561,7 +596,9 @@ app.MapPost("/v1/admin/privacy/delete-player", async (PlayerDeletionRequest requ
     {
         agentSessionsDeleted = agent.SessionsDeleted,
         rawAgentReportsDeleted = agent.RawReportsDeleted,
-        derivedEvidenceDeleted = true
+        derivedEvidenceDeleted = true,
+        casesPseudonymized = cases.CasesPseudonymized,
+        coreSessionsDeleted = cases.CoreSessionsDeleted
     });
 }).RequireAuthorization().RequireRateLimiting("administration");
 
@@ -1303,6 +1340,10 @@ static void ConfigurePersistence(WebApplicationBuilder builder)
         builder.Services.AddSingleton<IEvidenceStore>(service => new PostgresEvidenceStore(
             service.GetRequiredService<NpgsqlDataSource>(), TimeSpan.FromDays(
                 builder.Configuration.GetValue("Privacy:DerivedEvidenceRetentionDays", 30))));
+        builder.Services.AddSingleton<ICaseStore>(service => new PostgresCaseStore(
+            service.GetRequiredService<NpgsqlDataSource>(), TimeSpan.FromDays(
+                Math.Clamp(builder.Configuration.GetValue("Privacy:CaseRetentionDays", 180), 1, 180))));
+        builder.Services.AddSingleton<IPlayerDataPrivacyStore, PostgresPlayerDataPrivacyStore>();
         builder.Services.AddSingleton<IAgentSessionStore>(service =>
             new PostgresAgentSessionStore(service.GetRequiredService<NpgsqlDataSource>(),
                 TimeSpan.FromMinutes(builder.Configuration.GetValue(
@@ -1331,6 +1372,8 @@ static void ConfigurePersistence(WebApplicationBuilder builder)
     builder.Services.AddSingleton<ISessionAdministrationStore>(service => service.GetRequiredService<InMemorySessionAuthorizationStore>());
     builder.Services.AddSingleton<IAuditStore, InMemoryAuditStore>();
     builder.Services.AddSingleton<IEvidenceStore, InMemoryEvidenceStore>();
+    builder.Services.AddSingleton<ICaseStore, InMemoryCaseStore>();
+    builder.Services.AddSingleton<IPlayerDataPrivacyStore, EmptyPlayerDataPrivacyStore>();
     builder.Services.AddSingleton<IAgentSessionStore, InMemoryAgentSessionStore>();
     builder.Services.AddSingleton(service => LoadAgentPolicyLifecycle(builder.Configuration,
         builder.Environment, service.GetRequiredService<AgentGrantSigner>(),
@@ -1589,7 +1632,7 @@ file sealed record AgentBuildConfiguration(
 
 file static class CertaelRelease
 {
-    public const string ProductVersion = "0.3.0-alpha.2";
+    public const string ProductVersion = "0.4.0-alpha.1";
     public const uint ActionProtocolVersion = 1;
 }
 

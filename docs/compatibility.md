@@ -39,7 +39,7 @@ Create a source JSON document with a validity period no longer than 32 days:
     {
       "product": "Core",
       "minimum_supported_version": "0.3.0-alpha.2",
-      "recommended_version": "0.3.0-alpha.2",
+      "recommended_version": "0.4.0-alpha.1",
       "minimum_protocol_version": 1,
       "maximum_protocol_version": 1
     },

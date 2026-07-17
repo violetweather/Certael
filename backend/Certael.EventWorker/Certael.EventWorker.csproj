@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk.Worker">
+  <PropertyGroup>
+    <AssemblyName>Certael.EventWorker</AssemblyName>
+    <RootNamespace>Certael.EventWorker</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Certael.Persistence/Certael.Persistence.csproj" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.3" />
+    <PackageReference Include="NATS.Net" Version="2.7.3" />
+  </ItemGroup>
+</Project>

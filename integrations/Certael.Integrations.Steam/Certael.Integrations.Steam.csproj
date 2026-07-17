@@ -1,0 +1,1 @@
+<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><PackageId>Certael.Integrations.Steam</PackageId></PropertyGroup><ItemGroup><ProjectReference Include="../../server-sdk/Certael.Server/Certael.Server.csproj" /></ItemGroup></Project>

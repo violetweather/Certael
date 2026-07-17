@@ -8,6 +8,19 @@ permissions:
   contents: read
 
 jobs:
+  typescript-sdk:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with: { node-version: 22, cache: pnpm, cache-dependency-path: server-sdk/typescript/pnpm-lock.yaml }
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+        working-directory: server-sdk/typescript
+      - run: pnpm run build && pnpm run test
+        working-directory: server-sdk/typescript
+
   build-test:
     strategy:
       fail-fast: false

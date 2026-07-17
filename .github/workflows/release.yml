@@ -8,6 +8,19 @@ permissions:
   contents: read
 
 jobs:
+  typescript:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with: { node-version: 22, cache: pnpm, cache-dependency-path: server-sdk/typescript/pnpm-lock.yaml }
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile && pnpm run build && pnpm run test && pnpm pack --pack-destination ../../artifacts
+        working-directory: server-sdk/typescript
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with: { name: certael-typescript, path: artifacts, if-no-files-found: error }
+
   native:
     strategy:
       fail-fast: false
@@ -49,6 +62,7 @@ jobs:
           toolchain: 1.97.0
           targets: ${{ matrix.target }}
       - run: cargo build --locked --release -p certael-c-api --target ${{ matrix.target }}
+      - run: cargo build --locked --release -p certael-node --target ${{ matrix.target }}
       - name: Build pinned Agent probe
         run: cargo build --locked --release --manifest-path certael-agent-source/Cargo.toml -p certael-agent-probe --target ${{ matrix.target }}
       - name: Assemble native package
@@ -64,6 +78,13 @@ jobs:
           printf '%s\n' '17a125e6f0845df7159115449648d29cee7e0864' > "artifacts/certael-native-${{ matrix.artifact }}/AGENT_SOURCE_COMMIT"
           cp compatibility/core-agent-v1.json "artifacts/certael-native-${{ matrix.artifact }}/"
           cp "target/${{ matrix.target }}/release/${{ matrix.library }}" "artifacts/certael-native-${{ matrix.artifact }}/lib/"
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            cp "target/${{ matrix.target }}/release/certael_node.dll" "artifacts/certael-native-${{ matrix.artifact }}/lib/certael_node.node"
+          elif [[ "${{ runner.os }}" == "Linux" ]]; then
+            cp "target/${{ matrix.target }}/release/libcertael_node.so" "artifacts/certael-native-${{ matrix.artifact }}/lib/certael_node.node"
+          else
+            cp "target/${{ matrix.target }}/release/libcertael_node.dylib" "artifacts/certael-native-${{ matrix.artifact }}/lib/certael_node.node"
+          fi
           if [[ "${{ runner.os }}" == "Windows" ]]; then
             find "target/${{ matrix.target }}/release" -maxdepth 1 -name '*.lib' -exec cp {} "artifacts/certael-native-${{ matrix.artifact }}/lib/" \;
             cp "certael-agent-source/target/${{ matrix.target }}/release/certael_agent_probe.dll" "artifacts/certael-native-${{ matrix.artifact }}/lib/"
@@ -102,6 +123,11 @@ jobs:
         run: cargo build --locked --release -p certael-c-api
       - run: dotnet test Certael.slnx -c Release --warnaserror
       - run: dotnet pack server-sdk/Certael.Server/Certael.Server.csproj -c Release -o artifacts
+      - run: |
+          dotnet pack integrations/Certael.Integrations.Steam/Certael.Integrations.Steam.csproj -c Release -o artifacts
+          dotnet pack integrations/Certael.Integrations.Eos/Certael.Integrations.Eos.csproj -c Release -o artifacts
+          dotnet pack integrations/Certael.Integrations.PlayFab/Certael.Integrations.PlayFab.csproj -c Release -o artifacts
+          dotnet pack integrations/Certael.Integrations.Agones/Certael.Integrations.Agones.csproj -c Release -o artifacts
       - run: |
           cp LICENSE artifacts/LICENSE
           printf '%s\n' "$GITHUB_SHA" > artifacts/SOURCE_COMMIT
@@ -274,7 +300,7 @@ jobs:
         run: cosign sign --yes "ghcr.io/${{ github.repository_owner }}/certael-api@${{ steps.build.outputs.digest }}"
 
   publish:
-    needs: [native, managed, godot, container]
+    needs: [typescript, native, managed, godot, container]
     runs-on: ubuntu-24.04
     permissions:
       contents: write

@@ -4,10 +4,20 @@
   </Folder>
   <Folder Name="/backend/">
     <Project Path="backend/Certael.Api/Certael.Api.csproj" />
+    <Project Path="backend/Certael.AnalyticsWorker/Certael.AnalyticsWorker.csproj" />
+    <Project Path="backend/Certael.Console.Bff/Certael.Console.Bff.csproj" />
+    <Project Path="backend/Certael.Coordinator/Certael.Coordinator.csproj" />
+    <Project Path="backend/Certael.EventWorker/Certael.EventWorker.csproj" />
     <Project Path="backend/Certael.Persistence/Certael.Persistence.csproj" />
   </Folder>
   <Folder Name="/cli/">
     <Project Path="cli/Certael.Cli/Certael.Cli.csproj" />
+  </Folder>
+  <Folder Name="/integrations/">
+    <Project Path="integrations/Certael.Integrations.Steam/Certael.Integrations.Steam.csproj" />
+    <Project Path="integrations/Certael.Integrations.Eos/Certael.Integrations.Eos.csproj" />
+    <Project Path="integrations/Certael.Integrations.PlayFab/Certael.Integrations.PlayFab.csproj" />
+    <Project Path="integrations/Certael.Integrations.Agones/Certael.Integrations.Agones.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Certael.Server.Tests/Certael.Server.Tests.csproj" />
