@@ -12,6 +12,18 @@ services:
       retries: 10
     volumes: ["postgres-data:/var/lib/postgresql/data"]
     ports: ["127.0.0.1:5432:5432"]
+  control-postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: certael_coordinator
+      POSTGRES_PASSWORD: ${CERTAEL_COORDINATOR_POSTGRES_PASSWORD:?Set CERTAEL_COORDINATOR_POSTGRES_PASSWORD}
+      POSTGRES_DB: certael_control
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U certael_coordinator"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes: ["control-postgres-data:/var/lib/postgresql/data"]
   redis:
     image: redis:8-alpine
     command: ["redis-server", "--appendonly", "yes"]
@@ -19,6 +31,7 @@ services:
   nats:
     image: nats:2.11-alpine
     command: ["-js", "-sd", "/data"]
+    volumes: ["nats-data:/data"]
   clickhouse:
     image: clickhouse/clickhouse-server:25-alpine
   api:
@@ -33,5 +46,45 @@ services:
     ports: ["8080:8080"]
     depends_on:
       postgres: { condition: service_healthy }
+  event-worker:
+    build:
+      context: ../..
+      dockerfile: backend/Certael.EventWorker/Dockerfile
+    environment:
+      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=certael;Username=certael;Password=${CERTAEL_DEV_POSTGRES_PASSWORD:?Set CERTAEL_DEV_POSTGRES_PASSWORD}
+      Nats__Url: nats://nats:4222
+      EventWorker__AuthorizedTenants__0: development
+    depends_on:
+      postgres: { condition: service_healthy }
+      nats: { condition: service_started }
+  analytics-worker:
+    build:
+      context: ../..
+      dockerfile: backend/Certael.AnalyticsWorker/Dockerfile
+    environment:
+      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=certael;Username=certael;Password=${CERTAEL_DEV_POSTGRES_PASSWORD:?Set CERTAEL_DEV_POSTGRES_PASSWORD}
+      Nats__Url: nats://nats:4222
+      ClickHouse__Url: http://clickhouse:8123
+      ClickHouse__Database: default
+      AnalyticsWorker__ConsumerName: certael-clickhouse-v1
+      AnalyticsWorker__AuthorizedTenants__0: development
+    depends_on:
+      postgres: { condition: service_healthy }
+      nats: { condition: service_started }
+      clickhouse: { condition: service_started }
+  coordinator:
+    build:
+      context: ../..
+      dockerfile: backend/Certael.Coordinator/Dockerfile
+    environment:
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__ControlPostgres: Host=control-postgres;Port=5432;Database=certael_control;Username=certael_coordinator;Password=${CERTAEL_COORDINATOR_POSTGRES_PASSWORD:?Set CERTAEL_COORDINATOR_POSTGRES_PASSWORD}
+      Coordinator__SigningKeyId: ${CERTAEL_COORDINATOR_SIGNING_KEY_ID:-development-transfer-key}
+      Coordinator__SigningPrivateKeyPkcs8Base64: ${CERTAEL_COORDINATOR_SIGNING_KEY_PKCS8:?Set CERTAEL_COORDINATOR_SIGNING_KEY_PKCS8}
+    ports: ["8082:8080"]
+    depends_on:
+      control-postgres: { condition: service_healthy }
 volumes:
   postgres-data:
+  control-postgres-data:
+  nats-data:

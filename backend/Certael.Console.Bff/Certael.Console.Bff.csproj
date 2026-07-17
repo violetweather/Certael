@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <AssemblyName>Certael.Console.Bff</AssemblyName>
+    <RootNamespace>Certael.Console.Bff</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" Version="10.0.3" />
+  </ItemGroup>
+</Project>

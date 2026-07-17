@@ -3,11 +3,13 @@ resolver = "2"
 members = [
   "runtime/certael-core",
   "runtime/certael-c-api",
+  "runtime/certael-node",
+  "runtime/certael-wasm",
   "tools/certael-load"
 ]
 
 [workspace.package]
-version = "0.3.0-alpha.2"
+version = "0.4.0-alpha.1"
 edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/violetweather/Certael"

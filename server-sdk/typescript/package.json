@@ -1,0 +1,13 @@
+{
+  "name": "@certael/server",
+  "version": "0.4.0-alpha.1",
+  "description": "Authoritative Node.js server SDK for Certael",
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
+  "files": ["dist/index.js", "dist/index.d.ts", "README.md"],
+  "scripts": { "build": "tsc -p tsconfig.json", "test": "node --test dist/index.test.js" },
+  "devDependencies": { "@types/node": "24.10.13", "typescript": "7.0.2" },
+  "license": "Apache-2.0",
+  "repository": { "type": "git", "url": "https://github.com/violetweather/Certael.git" }
+}

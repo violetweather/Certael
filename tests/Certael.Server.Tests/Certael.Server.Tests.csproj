@@ -1,6 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup><IsTestProject>true</IsTestProject><IsPackable>false</IsPackable></PropertyGroup>
   <ItemGroup>
+    <ProjectReference Include="../../integrations/Certael.Integrations.Steam/Certael.Integrations.Steam.csproj" />
+    <ProjectReference Include="../../integrations/Certael.Integrations.Eos/Certael.Integrations.Eos.csproj" />
+    <ProjectReference Include="../../integrations/Certael.Integrations.PlayFab/Certael.Integrations.PlayFab.csproj" />
+    <ProjectReference Include="../../integrations/Certael.Integrations.Agones/Certael.Integrations.Agones.csproj" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <PackageReference Include="xunit.v3" Version="3.0.1" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.1" />
