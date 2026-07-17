@@ -7,8 +7,8 @@ license.workspace = true
 [dependencies]
 sha2.workspace = true
 thiserror.workspace = true
-wasmparser = "0.240"
-wasmtime = { version = "36", default-features = false, features = ["cranelift", "runtime"] }
+wasmparser = "0.253"
+wasmtime = { version = "46", default-features = false, features = ["cranelift", "runtime"] }
 
 [dev-dependencies]
 wat = "1"

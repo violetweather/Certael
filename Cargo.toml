@@ -15,10 +15,10 @@ license = "Apache-2.0"
 repository = "https://github.com/violetweather/Certael"
 
 [workspace.dependencies]
-ed25519-dalek = { version = "2.1", features = ["rand_core", "zeroize"] }
+ed25519-dalek = { version = "3.0", features = ["rand_core", "zeroize"] }
 rand_core = { version = "0.6", features = ["getrandom"] }
 serde = { version = "1", features = ["derive"] }
-sha2 = "0.10"
+sha2 = "0.11"
 thiserror = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
 zeroize = { version = "1", features = ["derive"] }
