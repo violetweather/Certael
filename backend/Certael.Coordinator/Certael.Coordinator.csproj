@@ -1,0 +1,1 @@
+<Project Sdk="Microsoft.NET.Sdk.Web"><PropertyGroup><PackageId>Certael.Coordinator</PackageId></PropertyGroup><ItemGroup><ProjectReference Include="../../server-sdk/Certael.Server/Certael.Server.csproj" /><PackageReference Include="Npgsql" Version="10.0.3" /></ItemGroup><ItemGroup><EmbeddedResource Include="Migrations/*.sql" /></ItemGroup></Project>

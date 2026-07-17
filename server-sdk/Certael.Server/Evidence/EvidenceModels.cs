@@ -62,4 +62,6 @@ public sealed record Verdict(
 public sealed record EvidenceBundle(
     Verdict Verdict,
     ImmutableArray<Finding> Findings,
-    byte[] ReplayDigest);
+    byte[] ReplayDigest,
+    string SignedPolicyId = "legacy",
+    string SignedPolicyVersion = "1");

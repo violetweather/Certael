@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-07-16T00:00:00Z",
+  "title": "Design System: Certael Operator Console",
+  "extensions": {
+    "colorMeta": {
+      "night-bench": { "role": "neutral", "displayName": "Night Bench", "canonical": "#0B1114", "tonalRamp": ["#071013", "#0B1114", "#10191D", "#162126", "#1D2B31", "#41545B", "#A5B4B8", "#E7F0F2"] },
+      "verified-cyan": { "role": "primary", "displayName": "Verified Cyan", "canonical": "#58C7C8", "tonalRamp": ["#071819", "#0E3234", "#185254", "#267476", "#36999A", "#58C7C8", "#A5E3E2", "#E5F8F7"] },
+      "review-amber": { "role": "warning", "displayName": "Review Amber", "canonical": "#D7AF62", "tonalRamp": ["#1C1609", "#3D2E12", "#684D20", "#92702F", "#B89245", "#D7AF62", "#EACF99", "#F8EED8"] },
+      "restriction-rose": { "role": "error", "displayName": "Restriction Rose", "canonical": "#E48B8F", "tonalRamp": ["#210D0F", "#431A1E", "#702B31", "#9C4248", "#C56167", "#E48B8F", "#F1B9BB", "#FBE8E9"] }
+    },
+    "typographyMeta": {
+      "heading": { "displayName": "Heading", "purpose": "Primary page and dossier headings." },
+      "body": { "displayName": "Body", "purpose": "Readable investigation prose and explanations." },
+      "label": { "displayName": "Label", "purpose": "Controls, table metadata, and compact field names." },
+      "machine": { "displayName": "Machine", "purpose": "Identifiers, hashes, versions, timestamps, and values only." }
+    },
+    "shadows": [
+      { "name": "overlay", "value": "0 16px 48px rgba(0, 0, 0, 0.36)", "purpose": "Menus and modal dialogs only." }
+    ],
+    "motion": [
+      { "name": "state", "value": "120ms cubic-bezier(0.2, 0, 0, 1)", "purpose": "Focus, hover, selection, and disclosure state changes." }
+    ],
+    "breakpoints": [
+      { "name": "narrow", "value": "640px" },
+      { "name": "tablet", "value": "960px" },
+      { "name": "desktop", "value": "1280px" }
+    ]
+  },
+  "components": [],
+  "narrative": {
+    "northStar": "The Forensic Workbench",
+    "overview": "A dark, exact, stable workspace where evidence, provenance, operator judgment, and bounded consequences remain visibly connected.",
+    "keyCharacteristics": ["Restrained cyan signal", "Stable divided surfaces", "Meaningful monospace", "Explicit provenance", "Keyboard-first operation"],
+    "rules": [
+      { "name": "Restrained Signal", "body": "Verified Cyan occupies no more than 10% of a screen and never decorates passive content.", "section": "colors" },
+      { "name": "Meaningful Mono", "body": "Monospace is reserved for machine-originated values.", "section": "typography" },
+      { "name": "Stable Surface", "body": "Investigation content never becomes a floating card grid.", "section": "elevation" }
+    ],
+    "dos": ["Keep evidence and provenance connected.", "Name exact bounded-action consequences."],
+    "donts": ["Don't build a neon SOC wall.", "Don't use glassmorphism or generic card grids.", "Don't show unexplained risk graphics."]
+  }
+}
