@@ -5,7 +5,13 @@ namespace Certael.Server.Tests;
 public sealed class EventEnvelopeTests
 {
     private const string GoldenEnvelope =
-        "0801121000112233445566778899aabbccddeeff1a0874656e616e742d61220467616d652a0470726f64320973657373696f6e2d313a10ffeeddccbbaa998877665544332211004211696e76656e746f72792e63726166746564480152030102035880d095ffbc31";
+        "0801121000112233445566778899aabb" +
+        "ccddeeff1a0874656e616e742d612204" +
+        "67616d652a0470726f64320973657373" +
+        "696f6e2d313a10ffeeddccbbaa998877" +
+        "665544332211004211696e76656e746f" +
+        "72792e6372616674656448015203010203" +
+        "5880d095ffbc31";
 
     [Fact]
     public void EventEnvelopeMatchesGoldenVectorAndRoundTrips()
