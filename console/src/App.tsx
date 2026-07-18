@@ -5,17 +5,20 @@ import * as Dialog from '@radix-ui/react-dialog'
 import * as Tabs from '@radix-ui/react-tabs'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import {
-  Activity, ArrowLeft, BookOpen, Check, ChevronRight, CircleAlert, Clock3,
+  Activity, ArrowLeft, BookOpen, Check, ChevronLeft, ChevronRight, CircleAlert, Clock3,
   FileSearch, Filter, FolderSearch, Keyboard, Link2, ListFilter,
-  LockKeyhole, MessageSquareText, Search, ShieldCheck, UserRound,
+  LockKeyhole, MessageSquareText, Search, Settings, ShieldCheck, SlidersHorizontal, UserRound,
   X,
 } from 'lucide-react'
 import { api, ApiError, BoundedAction, CaseActivity, CaseDetail, CaseDisposition,
-  CaseEvidence, CaseState, CaseSummary, OperatorSession } from './api'
+  CaseEvidence, CaseMetadataDefinition, CaseMetadataValue, CaseSettingsSnapshot,
+  CaseState, CaseSummary, OperatorSession } from './api'
 
 const stateLabels: Record<CaseState, string> = {
   Open: 'Open', InReview: 'In review', Resolved: 'Resolved', Dismissed: 'Dismissed',
 }
+const signalFamilies = ['AuthoritativeContradiction', 'ProtocolViolation', 'BuildIntegrity',
+  'RuntimeIntegrity', 'PlatformAttestation', 'BehavioralAnomaly', 'EconomyAnomaly', 'DeveloperReport']
 
 export function App() {
   const session = useQuery({ queryKey: ['session'], queryFn: api.session, retry: false })
@@ -40,22 +43,31 @@ function SignIn() {
 }
 
 function Console({ session }: { session: OperatorSession }) {
+  const [view, setView] = useState<'investigations' | 'settings'>('investigations')
   const [state, setState] = useState('')
   const [searchText, setSearchText] = useState('')
   const [search, setSearch] = useState('')
+  const [category, setCategory] = useState('')
+  const [ruleId, setRuleId] = useState('')
+  const [signalFamily, setSignalFamily] = useState('')
+  const [sortBy, setSortBy] = useState<'UpdatedAt' | 'CreatedAt' | 'Risk' | 'Confidence' | 'Rule' | 'Signal'>('UpdatedAt')
+  const [sortDirection, setSortDirection] = useState<'Ascending' | 'Descending'>('Descending')
+  const [cursors, setCursors] = useState<string[]>([])
   const [selected, setSelected] = useState<string | null>(null)
   const [mobileDetail, setMobileDetail] = useState(false)
   const searchRef = useRef<HTMLInputElement>(null)
   const workspaceRef = useRef<HTMLElement>(null)
   const returnFocusRef = useRef<HTMLElement | null>(null)
   const cases = useQuery({
-    queryKey: ['cases', session.tenantId, session.environmentId, state, search],
-    queryFn: () => api.cases(session, { state, search }),
+    queryKey: ['cases', session.tenantId, session.environmentId, state, search,
+      category, ruleId, signalFamily, sortBy, sortDirection, cursors.at(-1) ?? ''],
+    queryFn: () => api.casePage(session, { state, search, category, ruleId,
+      signalFamily, sortBy, sortDirection, cursor: cursors.at(-1), pageSize: 25 }),
   })
   useEffect(() => {
-    if (cases.data?.length && !cases.data.some(value => value.caseId === selected))
-      setSelected(cases.data[0]!.caseId)
-    if (cases.data?.length === 0) setSelected(null)
+    if (cases.data?.items.length && !cases.data.items.some(value => value.caseId === selected))
+      setSelected(cases.data.items[0]!.caseId)
+    if (cases.data?.items.length === 0) setSelected(null)
   }, [cases.data, selected])
   const detail = useQuery({
     queryKey: ['case', selected],
@@ -84,17 +96,33 @@ function Console({ session }: { session: OperatorSession }) {
     setMobileDetail(false)
     requestAnimationFrame(() => returnFocusRef.current?.focus())
   }
+  const resetPage = () => setCursors([])
+  const applyRuleFilter = (value: string) => {
+    setRuleId(value); setSortBy('Rule'); setSortDirection('Ascending'); resetPage()
+    setView('investigations'); setMobileDetail(false)
+    requestAnimationFrame(() => searchRef.current?.focus())
+  }
+  const clearFilters = () => {
+    setSearch(''); setSearchText(''); setCategory(''); setRuleId(''); setSignalFamily('')
+    setSortBy('UpdatedAt'); setSortDirection('Descending'); resetPage()
+  }
+  const filterCount = [search, category, ruleId, signalFamily].filter(Boolean).length
+  const activeGameId = cases.data?.items.find(item => item.caseId === selected)?.gameId
+    ?? cases.data?.items[0]?.gameId ?? ''
 
   return <div className="console-shell">
     <a className="skip-link" href="#investigation-queue">Skip to investigation queue</a>
     <a className="skip-link skip-workspace" href="#case-workspace">Skip to case workspace</a>
-    <NavRail session={session} />
+    <NavRail session={session} view={view} onView={next => {
+      setView(next); setMobileDetail(false)
+    }} />
+    {view === 'settings' ? <SettingsWorkspace session={session} initialGameId={activeGameId} /> : <>
     <aside id="investigation-queue" tabIndex={-1}
       className={`queue-pane ${mobileDetail ? 'mobile-hidden' : ''}`} aria-label="Investigation queue">
       <header className="queue-header">
         <div><p className="section-label">Investigation queue</p><h1>Cases</h1></div>
       </header>
-      <Tabs.Root value={state} onValueChange={setState} className="queue-tabs">
+      <Tabs.Root value={state} onValueChange={value => { setState(value); resetPage() }} className="queue-tabs">
         <Tabs.List aria-label="Filter cases by state">
           <Tabs.Trigger value="">Active</Tabs.Trigger>
           <Tabs.Trigger value="Open">Open</Tabs.Trigger>
@@ -102,21 +130,28 @@ function Console({ session }: { session: OperatorSession }) {
         </Tabs.List>
       </Tabs.Root>
       <form className="queue-search" onSubmit={(event) => {
-        event.preventDefault(); setSearch(searchText.trim())
+        event.preventDefault(); setSearch(searchText.trim()); resetPage()
       }}>
         <label htmlFor="case-search">Search cases</label>
         <div className="input-with-icon"><Search aria-hidden="true" />
           <input ref={searchRef} id="case-search" value={searchText}
-            onChange={event => setSearchText(event.target.value)} placeholder="Case, player, or finding" />
+            onChange={event => setSearchText(event.target.value)} placeholder="Case, player, finding, or metadata" />
           <button type="submit" className="search-submit" aria-label="Apply case search"><ChevronRight /></button>
         </div>
       </form>
+      <CaseFilterControls category={category} ruleId={ruleId} signalFamily={signalFamily}
+        sortBy={sortBy} sortDirection={sortDirection} onCategory={value => { setCategory(value); resetPage() }}
+        onRule={value => { setRuleId(value); resetPage() }} onSignal={value => { setSignalFamily(value); resetPage() }}
+        onSort={value => { setSortBy(value); resetPage() }} onDirection={value => { setSortDirection(value); resetPage() }} />
       <div className="filter-summary"><ListFilter aria-hidden="true" />
-        <span>{state ? stateLabels[state as CaseState] : 'Open and in-review cases'}</span>
-        {search && <button onClick={() => { setSearch(''); setSearchText('') }}>Clear search</button>}
+        <span>{state ? stateLabels[state as CaseState] : 'Open and in-review cases'} · {sortLabel(sortBy)}</span>
+        {filterCount > 0 && <button onClick={clearFilters}>Clear {filterCount} {filterCount === 1 ? 'filter' : 'filters'}</button>}
       </div>
-      <CaseQueue cases={cases.data} pending={cases.isPending} error={cases.error}
+      <CaseQueue cases={cases.data?.items} pending={cases.isPending} error={cases.error}
         selected={selected} onSelect={selectCase} onRetry={() => void cases.refetch()} />
+      <QueuePagination page={cursors.length + 1} hasNext={Boolean(cases.data?.hasMore && cases.data.nextCursor)}
+        pending={cases.isFetching} onPrevious={() => setCursors(values => values.slice(0, -1))}
+        onNext={() => cases.data?.nextCursor && setCursors(values => [...values, cases.data!.nextCursor!])} />
     </aside>
     <main ref={workspaceRef} id="case-workspace" tabIndex={-1} className={`workspace ${mobileDetail ? 'mobile-visible' : ''}`}>
       <button className="mobile-back" onClick={closeMobileDetail}>
@@ -126,25 +161,187 @@ function Console({ session }: { session: OperatorSession }) {
         : detail.isPending ? <CaseSkeleton />
         : detail.isError ? <PageStatus kind="error" title="This case could not be loaded"
           detail={detail.error.message} action="Try again" onAction={() => void detail.refetch()} compact />
-        : <CaseWorkspace detail={detail.data} session={session} />}
+        : <CaseWorkspace detail={detail.data} session={session} onRuleFilter={applyRuleFilter} />}
     </main>
+    </>}
     <ShortcutFooter />
   </div>
 }
 
-function NavRail({ session }: { session: OperatorSession }) {
+function NavRail({ session, view, onView }: { session: OperatorSession
+  view: 'investigations' | 'settings'; onView: (view: 'investigations' | 'settings') => void }) {
   return <nav className="nav-rail" aria-label="Primary navigation">
     <div className="product-mark" aria-label="Certael">C</div>
     <div className="nav-items"><Tooltip.Root><Tooltip.Trigger asChild>
-      <button className="current" aria-current="page" aria-label="Investigations"><FolderSearch /></button>
+      <button className={view === 'investigations' ? 'current' : ''}
+        aria-current={view === 'investigations' ? 'page' : undefined}
+        aria-label="Investigations" onClick={() => onView('investigations')}><FolderSearch /></button>
     </Tooltip.Trigger><Tooltip.Portal><Tooltip.Content side="right" className="tooltip">
-      Investigations<Tooltip.Arrow className="tooltip-arrow" /></Tooltip.Content></Tooltip.Portal></Tooltip.Root></div>
+      Investigations<Tooltip.Arrow className="tooltip-arrow" /></Tooltip.Content></Tooltip.Portal></Tooltip.Root>
+      <Tooltip.Root><Tooltip.Trigger asChild><button className={view === 'settings' ? 'current' : ''}
+        aria-current={view === 'settings' ? 'page' : undefined} aria-label="Settings"
+        onClick={() => onView('settings')}><Settings /></button></Tooltip.Trigger>
+        <Tooltip.Portal><Tooltip.Content side="right" className="tooltip">Case settings
+          <Tooltip.Arrow className="tooltip-arrow" /></Tooltip.Content></Tooltip.Portal></Tooltip.Root></div>
     <div className="nav-spacer" />
     <div className="operator-avatar" title={session.name ?? session.subject}
       aria-label={`Signed in as ${session.name ?? session.subject}`}>
       {(session.name ?? session.subject).slice(0, 2).toUpperCase()}
     </div>
   </nav>
+}
+
+function CaseFilterControls({ category, ruleId, signalFamily, sortBy, sortDirection,
+  onCategory, onRule, onSignal, onSort, onDirection }: {
+  category: string; ruleId: string; signalFamily: string
+  sortBy: 'UpdatedAt' | 'CreatedAt' | 'Risk' | 'Confidence' | 'Rule' | 'Signal'
+  sortDirection: 'Ascending' | 'Descending'
+  onCategory: (value: string) => void; onRule: (value: string) => void
+  onSignal: (value: string) => void; onSort: (value: typeof sortBy) => void
+  onDirection: (value: typeof sortDirection) => void
+}) {
+  return <details className="queue-filters"><summary><SlidersHorizontal aria-hidden="true" /> Filter and sort</summary>
+    <div className="queue-filter-grid">
+      <label>Category<input value={category} maxLength={96} onChange={event => onCategory(event.target.value.trimStart())}
+        placeholder="All categories" /></label>
+      <label>Rule<input className="machine" value={ruleId} maxLength={128}
+        onChange={event => onRule(event.target.value.trimStart())} placeholder="Any rule ID" /></label>
+      <label>Signal<select value={signalFamily} onChange={event => onSignal(event.target.value)}>
+        <option value="">All signals</option>{signalFamilies.map(value => <option key={value} value={value}>{humanize(value)}</option>)}
+      </select></label>
+      <label>Sort by<select value={sortBy} onChange={event => onSort(event.target.value as typeof sortBy)}>
+        <option value="UpdatedAt">Recently updated</option><option value="CreatedAt">Recently opened</option>
+        <option value="Risk">Highest risk</option><option value="Confidence">Highest confidence</option>
+        <option value="Rule">Rule ID</option><option value="Signal">Signal family</option>
+      </select></label>
+      <label>Direction<select value={sortDirection} onChange={event => onDirection(event.target.value as typeof sortDirection)}>
+        <option value="Descending">Descending</option><option value="Ascending">Ascending</option>
+      </select></label>
+    </div>
+  </details>
+}
+
+function QueuePagination({ page, hasNext, pending, onPrevious, onNext }: {
+  page: number; hasNext: boolean; pending: boolean; onPrevious: () => void; onNext: () => void
+}) {
+  return <nav className="queue-pagination" aria-label="Case queue pages">
+    <button aria-label="Previous case page" disabled={page === 1 || pending} onClick={onPrevious}><ChevronLeft /></button>
+    <span aria-live="polite">Page {page}</span>
+    <button aria-label="Next case page" disabled={!hasNext || pending} onClick={onNext}><ChevronRight /></button>
+  </nav>
+}
+
+function SettingsWorkspace({ session, initialGameId }: { session: OperatorSession; initialGameId: string }) {
+  const [gameInput, setGameInput] = useState(initialGameId)
+  const [gameId, setGameId] = useState(initialGameId)
+  useEffect(() => {
+    if (!gameInput && initialGameId) { setGameInput(initialGameId); setGameId(initialGameId) }
+  }, [initialGameId, gameInput])
+  const settings = useQuery({ queryKey: ['case-settings', session.tenantId, gameId, session.environmentId],
+    queryFn: () => api.caseSettings(session, gameId), enabled: Boolean(gameId) })
+  return <main className="settings-workspace" id="case-workspace">
+    <header className="settings-header"><div><p className="section-label">Case taxonomy and metadata</p>
+      <h1>Settings</h1><p>Define explainable categories and searchable metadata for one game and environment.</p></div>
+      <form onSubmit={event => { event.preventDefault(); setGameId(gameInput.trim()) }}>
+        <label htmlFor="settings-game">Game ID</label><div className="settings-game-input">
+          <input id="settings-game" className="machine" value={gameInput} required maxLength={128}
+            onChange={event => setGameInput(event.target.value)} placeholder="your-game-id" />
+          <button className="button secondary">Load settings</button></div>
+      </form></header>
+    {!gameId ? <WorkspaceEmpty filtered={false} />
+      : settings.isPending ? <CaseSkeleton />
+      : settings.isError ? <PageStatus compact kind="error" title="Case settings could not be loaded"
+          detail={settings.error.message} action="Try again" onAction={() => void settings.refetch()} />
+      : <SettingsEditor session={session} snapshot={settings.data} />}
+  </main>
+}
+
+function SettingsEditor({ session, snapshot }: { session: OperatorSession; snapshot: CaseSettingsSnapshot }) {
+  const client = useQueryClient()
+  const canWrite = session.scopes.includes('cases:write')
+  const [category, setCategory] = useState({ key: '', displayName: '', description: '', enabled: true, sortOrder: 0,
+    version: 0, reason: '' })
+  const [metadata, setMetadata] = useState({ key: '', label: '', type: 'Text', enumerationValues: '', sensitive: false,
+    searchable: true, required: false, enabled: true, version: 0, reason: '' })
+  const invalidate = () => client.invalidateQueries({ queryKey: ['case-settings', session.tenantId,
+    snapshot.scope.gameId, session.environmentId] })
+  const categoryMutation = useMutation({ mutationFn: () => api.upsertCategory(category.key, {
+    tenantId: session.tenantId, gameId: snapshot.scope.gameId, environmentId: session.environmentId,
+    key: category.key, displayName: category.displayName, description: category.description,
+    enabled: category.enabled, sortOrder: category.sortOrder, expectedVersion: category.version, reason: category.reason,
+  }), onSuccess: async () => { setCategory({ key: '', displayName: '', description: '', enabled: true, sortOrder: 0,
+    version: 0, reason: '' }); await invalidate() } })
+  const metadataMutation = useMutation({ mutationFn: () => api.upsertMetadataDefinition(metadata.key, {
+    tenantId: session.tenantId, gameId: snapshot.scope.gameId, environmentId: session.environmentId,
+    key: metadata.key, label: metadata.label, type: metadata.type,
+    enumerationValues: metadata.type === 'Enumeration' ? metadata.enumerationValues.split('\n').map(value => value.trim()).filter(Boolean) : [],
+    sensitive: metadata.sensitive, searchable: metadata.sensitive ? false : metadata.searchable,
+    required: metadata.required, enabled: metadata.enabled, expectedVersion: metadata.version, reason: metadata.reason,
+  }), onSuccess: async () => { setMetadata({ key: '', label: '', type: 'Text', enumerationValues: '', sensitive: false,
+    searchable: true, required: false, enabled: true, version: 0, reason: '' }); await invalidate() } })
+  return <div className="settings-sections">
+    <section className="settings-section"><div className="settings-section-heading"><div>
+      <p className="section-label">Queue organization</p><h2>Case categories</h2></div><span>{snapshot.categories.length}</span></div>
+      {snapshot.categories.length ? <div className="settings-list">{snapshot.categories.map(item => <div key={item.key}>
+        <div><strong>{item.displayName}</strong><span className="machine">{item.key}</span><p>{item.description || 'No description recorded.'}</p></div>
+        <span>{item.enabled ? 'Enabled' : 'Disabled'}</span>{canWrite && <button className="button ghost" onClick={() => setCategory({
+          key: item.key, displayName: item.displayName, description: item.description, enabled: item.enabled,
+          sortOrder: item.sortOrder, version: item.version, reason: '' })}>Edit</button>}</div>)}</div>
+        : <InlineEmpty title="No custom categories" detail="Add a category to replace the General default with game-specific investigative groupings." />}
+      {canWrite ? <form className="settings-form" onSubmit={event => { event.preventDefault(); categoryMutation.mutate() }}>
+        <div className="form-grid"><label>Key<input className="machine" required maxLength={96} pattern="[a-z][a-z0-9._-]*"
+          value={category.key} onChange={event => setCategory(value => ({ ...value, key: event.target.value }))} /></label>
+        <label>Display name<input required maxLength={128} value={category.displayName}
+          onChange={event => setCategory(value => ({ ...value, displayName: event.target.value }))} /></label>
+        <label>Sort order<input type="number" min={-10000} max={10000} value={category.sortOrder}
+          onChange={event => setCategory(value => ({ ...value, sortOrder: Number(event.target.value) }))} /></label></div>
+        <label>Description<textarea maxLength={1024} value={category.description}
+          onChange={event => setCategory(value => ({ ...value, description: event.target.value }))} /></label>
+        <label className="check-control"><input type="checkbox" checked={category.enabled}
+          onChange={event => setCategory(value => ({ ...value, enabled: event.target.checked }))} /> Enabled for case assignment</label>
+        <label>Required audit reason<textarea required maxLength={1024} value={category.reason}
+          onChange={event => setCategory(value => ({ ...value, reason: event.target.value }))} /></label>
+        {categoryMutation.isError && <FormError error={categoryMutation.error} />}
+        <div className="form-footer"><button className="button primary" disabled={categoryMutation.isPending || !category.reason.trim()}>
+          {categoryMutation.isPending ? 'Saving…' : category.version ? 'Update category' : 'Add category'}</button></div>
+      </form> : <PermissionMessage scope="cases:write" />}
+    </section>
+    <section className="settings-section"><div className="settings-section-heading"><div>
+      <p className="section-label">Structured investigation context</p><h2>Metadata definitions</h2></div>
+      <span>{snapshot.metadataDefinitions.length}</span></div>
+      {snapshot.metadataDefinitions.length ? <div className="settings-list">{snapshot.metadataDefinitions.map(item => <div key={item.key}>
+        <div><strong>{item.label}</strong><span className="machine">{item.key} · {humanize(item.type)}</span>
+          <p>{[item.searchable && 'Searchable', item.sensitive && 'Sensitive', item.required && 'Required',
+            item.enabled ? 'Enabled' : 'Disabled'].filter(Boolean).join(' · ')}</p></div>
+        {canWrite && <button className="button ghost" onClick={() => setMetadata({ key: item.key, label: item.label,
+          type: item.type, enumerationValues: item.enumerationValues.join('\n'), sensitive: item.sensitive,
+          searchable: item.searchable, required: item.required, enabled: item.enabled, version: item.version, reason: '' })}>Edit</button>}</div>)}</div>
+        : <InlineEmpty title="No metadata definitions" detail="Define only fields operators genuinely use for search, triage, or reconstruction." />}
+      {canWrite ? <form className="settings-form" onSubmit={event => { event.preventDefault(); metadataMutation.mutate() }}>
+        <div className="form-grid"><label>Key<input className="machine" required maxLength={96} pattern="[a-z][a-z0-9._-]*"
+          value={metadata.key} onChange={event => setMetadata(value => ({ ...value, key: event.target.value }))} /></label>
+        <label>Operator label<input required maxLength={128} value={metadata.label}
+          onChange={event => setMetadata(value => ({ ...value, label: event.target.value }))} /></label>
+        <label>Type<select value={metadata.type} onChange={event => setMetadata(value => ({ ...value, type: event.target.value }))}>
+          {['Text', 'Number', 'Boolean', 'DateTime', 'Enumeration', 'Identifier'].map(value => <option key={value}>{value}</option>)}</select></label></div>
+        {metadata.type === 'Enumeration' && <label>Allowed values, one per line<textarea required maxLength={4096}
+          value={metadata.enumerationValues} onChange={event => setMetadata(value => ({ ...value, enumerationValues: event.target.value }))} /></label>}
+        <div className="check-grid"><label className="check-control"><input type="checkbox" checked={metadata.sensitive}
+          onChange={event => setMetadata(value => ({ ...value, sensitive: event.target.checked, searchable: event.target.checked ? false : value.searchable }))} /> Sensitive</label>
+        <label className="check-control"><input type="checkbox" checked={metadata.searchable} disabled={metadata.sensitive}
+          onChange={event => setMetadata(value => ({ ...value, searchable: event.target.checked }))} /> Searchable</label>
+        <label className="check-control"><input type="checkbox" checked={metadata.required}
+          onChange={event => setMetadata(value => ({ ...value, required: event.target.checked }))} /> Required</label>
+        <label className="check-control"><input type="checkbox" checked={metadata.enabled}
+          onChange={event => setMetadata(value => ({ ...value, enabled: event.target.checked }))} /> Enabled</label></div>
+        <label>Required audit reason<textarea required maxLength={1024} value={metadata.reason}
+          onChange={event => setMetadata(value => ({ ...value, reason: event.target.value }))} /></label>
+        {metadataMutation.isError && <FormError error={metadataMutation.error} />}
+        <div className="form-footer"><button className="button primary" disabled={metadataMutation.isPending || !metadata.reason.trim()}>
+          {metadataMutation.isPending ? 'Saving…' : metadata.version ? 'Update definition' : 'Add definition'}</button></div>
+      </form> : <PermissionMessage scope="cases:write" />}
+    </section>
+  </div>
 }
 
 function CaseQueue({ cases, pending, error, selected, onSelect, onRetry }: {
@@ -176,13 +373,17 @@ function CaseQueue({ cases, pending, error, selected, onSelect, onRetry }: {
         <strong title={item.title}>{item.title}</strong>
         <span className="case-player" title={item.playerSubject}><UserRound aria-hidden="true" />
           <span>{item.playerSubject}</span></span>
+        <span className="case-signals"><span>{item.category || 'General'}</span>
+          {item.highestRisk > 0 && <span>Risk {item.highestRisk}</span>}
+          {item.signalFamilies?.[0] && <span>{humanize(item.signalFamilies[0])}</span>}</span>
         <span className="case-row-bottom"><StateBadge state={item.state} />
           <span className="case-assignee" title={item.assignedTo ?? 'Unassigned'}>{item.assignedTo ?? 'Unassigned'}</span></span>
       </button></li>)}
   </ul>
 }
 
-function CaseWorkspace({ detail, session }: { detail: CaseDetail; session: OperatorSession }) {
+function CaseWorkspace({ detail, session, onRuleFilter }: { detail: CaseDetail; session: OperatorSession
+  onRuleFilter: (ruleId: string) => void }) {
   const [tab, setTab] = useState('dossier')
   const value = detail.case
   return <div className="case-workspace">
@@ -205,15 +406,17 @@ function CaseWorkspace({ detail, session }: { detail: CaseDetail; session: Opera
         <Tabs.Trigger value="evidence">Evidence <span>{detail.evidence.length}</span></Tabs.Trigger>
         <Tabs.Trigger value="timeline">Timeline</Tabs.Trigger>
         <Tabs.Trigger value="notes">Notes <span>{detail.notes.length}</span></Tabs.Trigger>
+        <Tabs.Trigger value="metadata">Metadata <span>{detail.case.metadata?.length ?? 0}</span></Tabs.Trigger>
         <Tabs.Trigger value="relationships">Relationships</Tabs.Trigger>
         <Tabs.Trigger value="audit">Audit</Tabs.Trigger>
       </Tabs.List>
       <div className="case-grid">
         <section className="case-primary">
-          <Tabs.Content value="dossier"><Dossier detail={detail} session={session} /></Tabs.Content>
-          <Tabs.Content value="evidence"><EvidenceView evidence={detail.evidence} /></Tabs.Content>
+          <Tabs.Content value="dossier"><Dossier detail={detail} session={session} onRuleFilter={onRuleFilter} /></Tabs.Content>
+          <Tabs.Content value="evidence"><EvidenceView evidence={detail.evidence} onRuleFilter={onRuleFilter} /></Tabs.Content>
           <Tabs.Content value="timeline"><CombinedTimeline detail={detail} /></Tabs.Content>
           <Tabs.Content value="notes"><NotesView detail={detail} session={session} /></Tabs.Content>
+          <Tabs.Content value="metadata"><CaseMetadataEditor detail={detail} session={session} /></Tabs.Content>
           <Tabs.Content value="relationships"><RelationshipView evidence={detail.evidence} /></Tabs.Content>
           <Tabs.Content value="audit"><AuditView activity={detail.activity} /></Tabs.Content>
         </section>
@@ -226,7 +429,8 @@ function CaseWorkspace({ detail, session }: { detail: CaseDetail; session: Opera
   </div>
 }
 
-function Dossier({ detail, session }: { detail: CaseDetail; session: OperatorSession }) {
+function Dossier({ detail, session, onRuleFilter }: { detail: CaseDetail; session: OperatorSession
+  onRuleFilter: (ruleId: string) => void }) {
   const finding = detail.evidence.find(value => value.findingId) ?? detail.evidence[0]
   return <>
     <section className="finding-summary" aria-labelledby="finding-heading">
@@ -241,14 +445,15 @@ function Dossier({ detail, session }: { detail: CaseDetail; session: OperatorSes
         <div><dt>Replay digest</dt><dd className="machine">{finding ? shortDigest(finding.replayDigest) : 'Not available'}</dd></div>
       </dl>
       <div className="explanation"><p className="section-label">Finding explanation</p>
-        <p>{finding?.ruleId ? <>Rule <span className="machine">{finding.ruleId} · {finding.ruleVersion}</span> produced this finding from {detail.evidence.filter(value => value.findingId).length} normalized evidence records.</> : 'The verdict is attached; no normalized finding record remains.'}</p>
+        <p>{finding?.ruleId ? <>Rule <RuleFilterButton ruleId={finding.ruleId} version={finding.ruleVersion}
+          onSelect={onRuleFilter} /> produced this finding from {detail.evidence.filter(value => value.findingId).length} normalized evidence records.</> : 'The verdict is attached; no normalized finding record remains.'}</p>
         <p className="integrity-line"><ShieldCheck aria-hidden="true" /> Exact policy, fields, timestamps, and replay digest are retained.</p>
       </div>
     </section>
     <section className="section-block"><div className="section-heading"><div>
       <p className="section-label">Evidence</p><h2>Authoritative chain</h2></div>
       <span>{detail.evidence.length} records</span></div>
-      <EvidenceTable evidence={detail.evidence.slice(0, 8)} />
+      <EvidenceTable evidence={detail.evidence.slice(0, 8)} onRuleFilter={onRuleFilter} />
     </section>
     <NotesView detail={detail} session={session} compact />
     <div className="mobile-bounded"><BoundedActionPanel detail={detail} session={session} /></div>
@@ -256,15 +461,17 @@ function Dossier({ detail, session }: { detail: CaseDetail; session: OperatorSes
 }
 
 const evidenceColumn = createColumnHelper<CaseEvidence>()
-function EvidenceTable({ evidence }: { evidence: CaseEvidence[] }) {
+function EvidenceTable({ evidence, onRuleFilter }: { evidence: CaseEvidence[]; onRuleFilter: (ruleId: string) => void }) {
   const columns = useMemo(() => [
     evidenceColumn.accessor('findingId', { header: 'Evidence', cell: info =>
       <span className="evidence-id"><FileSearch /> <span className="machine">{info.getValue() ? shortId(info.getValue()!) : shortId(info.row.original.verdictId)}</span></span> }),
     evidenceColumn.accessor('signalFamily', { header: 'Signal', cell: info => info.getValue() ?? 'Verdict' }),
     evidenceColumn.accessor('observedAt', { header: 'Observed UTC', cell: info => <time className="machine" dateTime={info.getValue()}>{formatTime(info.getValue())}</time> }),
-    evidenceColumn.accessor('ruleId', { header: 'Rule', cell: info => <span className="machine">{info.getValue() ? `${info.getValue()} · ${info.row.original.ruleVersion}` : 'Verdict aggregate'}</span> }),
+    evidenceColumn.accessor('ruleId', { header: 'Rule', cell: info => info.getValue()
+      ? <RuleFilterButton ruleId={info.getValue()} version={info.row.original.ruleVersion} onSelect={onRuleFilter} />
+      : <span className="machine">Verdict aggregate</span> }),
     evidenceColumn.accessor('trust', { header: 'Integrity', cell: info => <span className="integrity"><Check />{info.getValue() ?? 'Bundled'}</span> }),
-  ], [])
+  ], [onRuleFilter])
   const table = useReactTable({ data: evidence, columns, getCoreRowModel: getCoreRowModel() })
   if (!evidence.length) return <InlineEmpty title="Evidence was deleted under retention or privacy policy"
     detail="The retained case history remains pseudonymized and auditable." />
@@ -276,10 +483,81 @@ function EvidenceTable({ evidence }: { evidence: CaseEvidence[] }) {
   </div>
 }
 
-function EvidenceView({ evidence }: { evidence: CaseEvidence[] }) {
+function EvidenceView({ evidence, onRuleFilter }: { evidence: CaseEvidence[]; onRuleFilter: (ruleId: string) => void }) {
   return <section className="section-block full-height"><div className="section-heading"><div>
     <p className="section-label">Evidence search</p><h2>Case evidence</h2></div>
-    <span>{evidence.length} records</span></div><EvidenceTable evidence={evidence} /></section>
+    <span>{evidence.length} records</span></div><EvidenceTable evidence={evidence} onRuleFilter={onRuleFilter} /></section>
+}
+
+function RuleFilterButton({ ruleId, version, onSelect }: { ruleId: string; version: string
+  onSelect: (ruleId: string) => void }) {
+  return <button className="rule-filter machine" onClick={() => onSelect(ruleId)}
+    title={`Filter the case queue to ${ruleId}`}>{ruleId} · {version}<Search aria-hidden="true" /></button>
+}
+
+function CaseMetadataEditor({ detail, session }: { detail: CaseDetail; session: OperatorSession }) {
+  const client = useQueryClient()
+  const settings = useQuery({ queryKey: ['case-settings', session.tenantId, detail.case.gameId,
+    session.environmentId], queryFn: () => api.caseSettings(session, detail.case.gameId) })
+  const [category, setCategory] = useState(detail.case.category || 'General')
+  const [values, setValues] = useState<Record<string, string>>(() => Object.fromEntries(
+    (detail.case.metadata ?? []).map(value => [value.key, value.value])))
+  const [reason, setReason] = useState('')
+  useEffect(() => {
+    setCategory(detail.case.category || 'General')
+    setValues(Object.fromEntries((detail.case.metadata ?? []).map(value => [value.key, value.value])))
+    setReason('')
+  }, [detail.case.caseId, detail.case.version, detail.case.category, detail.case.metadata])
+  const definitions = settings.data?.metadataDefinitions.filter(value => value.enabled) ?? []
+  const mutation = useMutation({ mutationFn: () => api.updateMetadata(detail.case.caseId, {
+    tenantId: session.tenantId, environmentId: session.environmentId, category,
+    metadata: definitions.filter(definition => definition.type === 'Boolean' || Boolean(values[definition.key]?.trim()))
+      .map(definition => ({ key: definition.key, type: definition.type, value: values[definition.key] ?? 'false',
+        sensitive: definition.sensitive, searchable: definition.searchable } satisfies CaseMetadataValue)),
+    reason, expectedVersion: detail.case.version,
+  }), onSuccess: async () => { setReason(''); await client.invalidateQueries({ queryKey: ['case', detail.case.caseId] });
+    await client.invalidateQueries({ queryKey: ['cases'] }) } })
+  if (settings.isPending) return <section className="section-block full-height"><CaseSkeleton /></section>
+  if (settings.isError) return <PageStatus compact kind="error" title="Case metadata settings are unavailable"
+    detail={settings.error.message} action="Try again" onAction={() => void settings.refetch()} />
+  const canWrite = session.scopes.includes('cases:write')
+  return <section className="section-block full-height metadata-editor"><div className="section-heading"><div>
+    <p className="section-label">Structured case context</p><h2>Category and metadata</h2></div>
+    <span>{definitions.length} available fields</span></div>
+    {!definitions.length && !settings.data.categories.length ? <InlineEmpty title="No case metadata is configured"
+      detail="An authorized operator can add categories and metadata definitions in Settings." />
+      : <form onSubmit={event => { event.preventDefault(); mutation.mutate() }}>
+        <label>Category<select value={category} disabled={!canWrite} onChange={event => setCategory(event.target.value)}>
+          {!settings.data.categories.some(value => value.key === category) && <option value={category}>{category}</option>}
+          {settings.data.categories.filter(value => value.enabled).map(value => <option key={value.key} value={value.key}>{value.displayName}</option>)}
+        </select></label>
+        <div className="metadata-fields">{definitions.map(definition => <MetadataField key={definition.key}
+          definition={definition} value={values[definition.key] ?? ''} disabled={!canWrite}
+          onChange={value => setValues(current => ({ ...current, [definition.key]: value }))} />)}</div>
+        {canWrite ? <><label>Required audit reason<textarea value={reason} required maxLength={1024}
+          onChange={event => setReason(event.target.value)} placeholder="Explain why this case context is being changed." /></label>
+          {mutation.isError && <FormError error={mutation.error} />}
+          <div className="form-footer"><button className="button primary" disabled={!reason.trim() || mutation.isPending}>
+            {mutation.isPending ? 'Saving metadata…' : 'Save case metadata'}</button></div></> : <PermissionMessage scope="cases:write" />}
+        {mutation.isSuccess && <span className="sr-only" role="status">Case metadata updated.</span>}
+      </form>}
+  </section>
+}
+
+function MetadataField({ definition, value, disabled, onChange }: { definition: CaseMetadataDefinition
+  value: string; disabled: boolean; onChange: (value: string) => void }) {
+  const hint = [definition.required && 'Required', definition.searchable && 'Searchable',
+    definition.sensitive && 'Sensitive'].filter(Boolean).join(' · ')
+  return <label>{definition.label}{hint && <span>{hint}</span>}
+    {definition.type === 'Boolean' ? <select value={value || 'false'} disabled={disabled}
+      onChange={event => onChange(event.target.value)}><option value="false">No</option><option value="true">Yes</option></select>
+    : definition.type === 'Enumeration' ? <select value={value} required={definition.required} disabled={disabled}
+      onChange={event => onChange(event.target.value)}><option value="">Select…</option>
+      {definition.enumerationValues.map(option => <option key={option}>{option}</option>)}</select>
+    : <input type={definition.type === 'Number' ? 'number' : definition.type === 'DateTime' ? 'datetime-local' : 'text'}
+      className={definition.type === 'Identifier' ? 'machine' : undefined} value={value} required={definition.required}
+      disabled={disabled} maxLength={definition.type === 'Number' ? undefined : 2048}
+      onChange={event => onChange(event.target.value)} />}</label>
 }
 
 function CombinedTimeline({ detail }: { detail: CaseDetail }) {
@@ -509,3 +787,5 @@ function shortDigest(value: string) { const text = value.replaceAll('=', ''); re
 function formatTime(value: string) { return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'medium', timeZone: 'UTC' }).format(new Date(value)) + ' UTC' }
 function relativeTime(value: string) { const minutes = Math.max(0, Math.round((Date.now() - new Date(value).getTime()) / 60000)); return minutes < 1 ? 'now' : minutes < 60 ? `${minutes}m ago` : minutes < 1440 ? `${Math.floor(minutes / 60)}h ago` : `${Math.floor(minutes / 1440)}d ago` }
 function humanize(value: string) { return value.replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase() }
+function sortLabel(value: string) { return ({ UpdatedAt: 'recently updated', CreatedAt: 'recently opened',
+  Risk: 'highest risk', Confidence: 'highest confidence', Rule: 'rule ID', Signal: 'signal family' } as Record<string, string>)[value] ?? value }

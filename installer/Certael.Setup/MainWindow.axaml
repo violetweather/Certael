@@ -1,0 +1,262 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="Certael.Setup.MainWindow"
+        Title="Certael Setup"
+        Width="1060" Height="760"
+        MinWidth="820" MinHeight="620"
+        Background="#0B121B"
+        FontFamily="Inter">
+  <Window.Resources>
+    <SolidColorBrush x:Key="InkBrush" Color="#F4F7FA" />
+    <SolidColorBrush x:Key="SecondaryBrush" Color="#B7C3D0" />
+    <SolidColorBrush x:Key="MutedBrush" Color="#8F9EAE" />
+    <SolidColorBrush x:Key="SurfaceBrush" Color="#182534" />
+    <SolidColorBrush x:Key="BorderBrush" Color="#2A3A4C" />
+    <SolidColorBrush x:Key="AccentBrush" Color="#58C7D4" />
+    <SolidColorBrush x:Key="ActionBrush" Color="#286873" />
+    <SolidColorBrush x:Key="FailureBrush" Color="#FFB4A9" />
+  </Window.Resources>
+  <Window.Styles>
+    <Style Selector="TextBlock">
+      <Setter Property="Foreground" Value="{StaticResource InkBrush}" />
+    </Style>
+    <Style Selector="TextBlock.secondary">
+      <Setter Property="Foreground" Value="{StaticResource SecondaryBrush}" />
+    </Style>
+    <Style Selector="TextBlock.muted">
+      <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
+    </Style>
+    <Style Selector="TextBlock.title">
+      <Setter Property="FontSize" Value="24" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+    <Style Selector="TextBlock.heading">
+      <Setter Property="FontSize" Value="18" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+    <Style Selector="TextBlock.label">
+      <Setter Property="FontSize" Value="13" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+    <Style Selector="TextBox, ComboBox">
+      <Setter Property="MinHeight" Value="42" />
+      <Setter Property="Background" Value="#111C28" />
+      <Setter Property="Foreground" Value="{StaticResource InkBrush}" />
+      <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="4" />
+    </Style>
+    <Style Selector="Button">
+      <Setter Property="MinHeight" Value="42" />
+      <Setter Property="Padding" Value="18,8" />
+      <Setter Property="CornerRadius" Value="4" />
+      <Setter Property="Background" Value="{StaticResource SurfaceBrush}" />
+      <Setter Property="Foreground" Value="{StaticResource InkBrush}" />
+    </Style>
+    <Style Selector="Button.primary">
+      <Setter Property="Background" Value="{StaticResource ActionBrush}" />
+      <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+      <Setter Property="BorderThickness" Value="2" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+    <Style Selector="Border.outcome">
+      <Setter Property="Background" Value="#111C28" />
+      <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="8" />
+      <Setter Property="Padding" Value="18" />
+    </Style>
+  </Window.Styles>
+
+  <Grid ColumnDefinitions="230,*">
+    <Border Grid.Column="0" Background="#111C28" BorderBrush="#2A3A4C" BorderThickness="0,0,1,0" Padding="28,32">
+      <Grid RowDefinitions="Auto,*,Auto">
+        <StackPanel Spacing="8">
+          <TextBlock Text="CERTAEL" FontSize="18" FontWeight="SemiBold" Foreground="{StaticResource AccentBrush}" />
+          <TextBlock Text="Suite setup" Classes="secondary" />
+        </StackPanel>
+        <StackPanel Grid.Row="1" Margin="0,52,0,0" Spacing="22">
+          <StackPanel Spacing="4">
+            <TextBlock x:Name="PhaseChooseNumber" Text="1" Classes="label" Foreground="{StaticResource AccentBrush}" />
+            <TextBlock x:Name="PhaseChooseText" Text="Choose operation" FontWeight="SemiBold" />
+            <TextBlock Text="Signed inputs and destination" Classes="muted" FontSize="12" TextWrapping="Wrap" />
+          </StackPanel>
+          <StackPanel Spacing="4">
+            <TextBlock x:Name="PhaseReviewNumber" Text="2" Classes="label muted" />
+            <TextBlock x:Name="PhaseReviewText" Text="Verify and review" Classes="secondary" />
+            <TextBlock Text="Components before mutation" Classes="muted" FontSize="12" TextWrapping="Wrap" />
+          </StackPanel>
+          <StackPanel Spacing="4">
+            <TextBlock x:Name="PhaseApplyNumber" Text="3" Classes="label muted" />
+            <TextBlock x:Name="PhaseApplyText" Text="Apply safely" Classes="secondary" />
+            <TextBlock Text="Progress, rollback, result" Classes="muted" FontSize="12" TextWrapping="Wrap" />
+          </StackPanel>
+        </StackPanel>
+        <TextBlock Grid.Row="2" Text="No source code or unsigned scripts are executed." Classes="muted" FontSize="12" TextWrapping="Wrap" />
+      </Grid>
+    </Border>
+
+    <Grid Grid.Column="1" RowDefinitions="Auto,*,Auto,Auto">
+      <Border Padding="34,28,34,20" BorderBrush="#2A3A4C" BorderThickness="0,0,0,1">
+        <Grid ColumnDefinitions="*,Auto">
+          <StackPanel Spacing="5">
+            <TextBlock x:Name="PageTitle" Text="Set up Certael" Classes="title" />
+            <TextBlock x:Name="PageSubtitle" Text="Choose an operation and the signed release inputs." Classes="secondary" />
+          </StackPanel>
+          <Border Grid.Column="1" Background="#182534" CornerRadius="4" Padding="10,6" VerticalAlignment="Center">
+            <TextBlock x:Name="RuntimeBadge" Text="Detecting platform" Classes="label" />
+          </Border>
+        </Grid>
+      </Border>
+
+      <ScrollViewer Grid.Row="1" Padding="34,26,34,20" HorizontalScrollBarVisibility="Disabled">
+        <Grid MaxWidth="760" HorizontalAlignment="Stretch">
+          <StackPanel x:Name="ChoosePanel" Spacing="18" HorizontalAlignment="Stretch">
+            <StackPanel Spacing="7">
+              <TextBlock Text="Operation" Classes="label" />
+              <ComboBox x:Name="OperationBox" AutomationProperties.Name="Setup operation" />
+            </StackPanel>
+
+            <Border x:Name="InputMessageBorder"
+                    Classes="outcome"
+                    IsVisible="False"
+                    AutomationProperties.LiveSetting="Assertive">
+              <StackPanel Spacing="5">
+                <TextBlock x:Name="InputMessageTitle" Text="Check the selected inputs" FontWeight="SemiBold" />
+                <TextBlock x:Name="InputMessageText" TextWrapping="Wrap" Classes="secondary" />
+              </StackPanel>
+            </Border>
+
+            <StackPanel x:Name="SignedInputPanel" Spacing="14">
+              <StackPanel Spacing="7">
+                <TextBlock Text="Signed suite manifest" Classes="label" />
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
+                  <TextBox x:Name="ManifestPathBox" Watermark="certael-suite-vX.Y.Z.signed.json" AutomationProperties.Name="Signed suite manifest path" />
+                  <Button x:Name="BrowseManifestButton" Grid.Column="1" Content="Browse…" />
+                </Grid>
+              </StackPanel>
+              <StackPanel Spacing="7">
+                <TextBlock Text="Release trust store" Classes="label" />
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
+                  <TextBox x:Name="TrustStorePathBox" Watermark="certael-release-keys.json" AutomationProperties.Name="Release trust store path" />
+                  <Button x:Name="BrowseTrustButton" Grid.Column="1" Content="Browse…" />
+                </Grid>
+              </StackPanel>
+              <StackPanel Spacing="7">
+                <TextBlock Text="Project configuration" Classes="label" />
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
+                  <TextBox x:Name="ConfigurationPathBox" Watermark="certael.yaml" AutomationProperties.Name="Project configuration path" />
+                  <Button x:Name="BrowseConfigurationButton" Grid.Column="1" Content="Browse…" />
+                </Grid>
+              </StackPanel>
+            </StackPanel>
+
+            <StackPanel Spacing="14">
+              <StackPanel Spacing="7">
+                <TextBlock Text="Installation directory" Classes="label" />
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                  <TextBox x:Name="InstallRootBox" Watermark="Choose a project directory" AutomationProperties.Name="Installation directory" />
+                  <Button x:Name="BrowseInstallRootButton" Grid.Column="1" Content="Browse…" />
+                </Grid>
+              </StackPanel>
+              <StackPanel x:Name="CachePanel" Spacing="7">
+                <TextBlock Text="Download cache" Classes="label" />
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                  <TextBox x:Name="CacheRootBox" Watermark="Verified artifact cache" AutomationProperties.Name="Download cache directory" />
+                  <Button x:Name="BrowseCacheButton" Grid.Column="1" Content="Browse…" />
+                </Grid>
+              </StackPanel>
+            </StackPanel>
+
+            <StackPanel x:Name="RuntimePanel" Spacing="7">
+              <TextBlock Text="Target platform" Classes="label" />
+              <ComboBox x:Name="RuntimeBox" AutomationProperties.Name="Target runtime identifier" />
+            </StackPanel>
+
+            <StackPanel x:Name="RecoveryPanel" IsVisible="False" Spacing="7">
+              <TextBlock Text="Recovery plan ID" Classes="label" />
+              <TextBox x:Name="RecoveryPlanBox" Watermark="00000000-0000-0000-0000-000000000000" AutomationProperties.Name="Recovery plan identifier" />
+            </StackPanel>
+
+          </StackPanel>
+
+          <StackPanel x:Name="ReviewPanel" IsVisible="False" Spacing="20" HorizontalAlignment="Stretch">
+            <Border Classes="outcome">
+              <Grid ColumnDefinitions="Auto,*" ColumnSpacing="14">
+                <TextBlock Text="✓" FontSize="22" Foreground="{StaticResource AccentBrush}" />
+                <StackPanel Grid.Column="1" Spacing="4">
+                  <TextBlock x:Name="VerifiedTitle" Text="Signed release verified" FontWeight="SemiBold" />
+                  <TextBlock x:Name="VerifiedDetail" Classes="secondary" TextWrapping="Wrap" />
+                </StackPanel>
+              </Grid>
+            </Border>
+            <StackPanel x:Name="ComponentReviewPanel" Spacing="10">
+              <TextBlock Text="Components selected for this project" Classes="heading" />
+              <TextBlock Text="Dependencies are resolved from the signed manifest for the selected platform." Classes="secondary" TextWrapping="Wrap" />
+              <Border Background="#111C28" BorderBrush="#2A3A4C" BorderThickness="1" CornerRadius="8" Padding="14">
+                <ItemsControl x:Name="ComponentList" />
+              </Border>
+            </StackPanel>
+            <Border Classes="outcome">
+              <StackPanel Spacing="6">
+                <TextBlock Text="Before you continue" FontWeight="SemiBold" />
+                <TextBlock x:Name="MutationNotice" Text="Certael will download only signed HTTPS artifacts, verify each digest, preflight archive paths, and apply one recoverable transaction." Classes="secondary" TextWrapping="Wrap" />
+              </StackPanel>
+            </Border>
+          </StackPanel>
+
+          <StackPanel x:Name="ProgressPanel" IsVisible="False" Spacing="20" HorizontalAlignment="Stretch">
+            <TextBlock x:Name="ProgressTitle" Text="Applying verified installation" Classes="heading" />
+            <ProgressBar x:Name="OperationProgress" IsIndeterminate="True" Height="6" />
+            <TextBlock x:Name="ProgressMessage" Text="Preparing the signed installation plan…" Classes="secondary" TextWrapping="Wrap" />
+            <Border Classes="outcome">
+              <StackPanel Spacing="6">
+                <TextBlock Text="Safe interruption" FontWeight="SemiBold" />
+                <TextBlock Text="Cancel requests stop before the next operation. If mutation has begun, the installer rolls completed operations back and retains a recovery journal." Classes="secondary" TextWrapping="Wrap" />
+              </StackPanel>
+            </Border>
+          </StackPanel>
+
+          <StackPanel x:Name="ResultPanel" IsVisible="False" Spacing="20" HorizontalAlignment="Stretch">
+            <Border Classes="outcome">
+              <StackPanel Spacing="8">
+                <TextBlock x:Name="ResultSymbol" Text="✓" FontSize="30" Foreground="{StaticResource AccentBrush}" />
+                <TextBlock x:Name="ResultTitle" Text="Certael is installed" Classes="title" />
+                <TextBlock x:Name="ResultMessage" Classes="secondary" TextWrapping="Wrap" MaxWidth="680" HorizontalAlignment="Left" />
+              </StackPanel>
+            </Border>
+          </StackPanel>
+        </Grid>
+      </ScrollViewer>
+
+      <Border Grid.Row="2" x:Name="ActionFooter" Background="#0B121B" BorderBrush="#2A3A4C" BorderThickness="0,1,0,0" Padding="34,14">
+        <Grid>
+          <StackPanel x:Name="ChooseActions" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
+            <Button x:Name="VerifyButton" Content="Verify and review" Classes="primary" />
+          </StackPanel>
+          <StackPanel x:Name="ReviewActions" IsVisible="False" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
+            <Button x:Name="BackButton" Content="Back" />
+            <Button x:Name="ApplyButton" Content="Install Certael" Classes="primary" />
+          </StackPanel>
+          <StackPanel x:Name="ProgressActions" IsVisible="False" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
+            <Button x:Name="CancelButton" Content="Cancel safely" />
+          </StackPanel>
+          <StackPanel x:Name="ResultActions" IsVisible="False" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
+            <Button x:Name="StartOverButton" Content="Another operation" />
+            <Button x:Name="CloseButton" Content="Close setup" Classes="primary" />
+          </StackPanel>
+        </Grid>
+      </Border>
+
+      <Expander Grid.Row="3" x:Name="DetailsExpander" Header="Technical details and redacted log" Background="#111C28" BorderBrush="#2A3A4C" BorderThickness="0,1,0,0" Padding="22,10">
+        <Grid RowDefinitions="*,Auto" MinHeight="190" MaxHeight="290">
+          <TextBox x:Name="LogBox" IsReadOnly="True" AcceptsReturn="True" TextWrapping="NoWrap" FontFamily="Cascadia Mono, Consolas, monospace" FontSize="12" ScrollViewer.VerticalScrollBarVisibility="Auto" ScrollViewer.HorizontalScrollBarVisibility="Auto" AutomationProperties.Name="Redacted installation log" />
+          <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0" Spacing="10">
+            <TextBlock Text="Secrets are redacted before display or export." Classes="muted" VerticalAlignment="Center" />
+            <Button x:Name="SaveLogButton" Content="Save log…" />
+          </StackPanel>
+        </Grid>
+      </Expander>
+    </Grid>
+  </Grid>
+</Window>

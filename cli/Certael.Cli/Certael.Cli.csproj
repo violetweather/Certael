@@ -6,5 +6,8 @@
     <ToolCommandName>certaelctl</ToolCommandName>
     <PackageId>Certael.Cli</PackageId>
   </PropertyGroup>
-  <ItemGroup><ProjectReference Include="../../server-sdk/Certael.Server/Certael.Server.csproj" /></ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../server-sdk/Certael.Server/Certael.Server.csproj" />
+    <ProjectReference Include="../../installer/Certael.Installer/Certael.Installer.csproj" />
+  </ItemGroup>
 </Project>

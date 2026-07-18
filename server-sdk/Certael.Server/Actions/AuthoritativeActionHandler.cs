@@ -161,7 +161,8 @@ public sealed class AuthoritativeActionHandler<TRequest, TResponse, TState>(
 public sealed record ActionBinding(
     string ActionType, string GameId, string EnvironmentId, string MatchId,
     string ServerId, string BuildId, string RequestSchema = "", uint SchemaVersion = 1,
-    string TenantId = "", string ProtectionProfileId = "");
+    string TenantId = "", string ProtectionProfileId = "", string Region = "",
+    long RegionFencingEpoch = 0);
 
 public sealed record RuleDecision<TResponse>(bool Allowed, string PublicReason, TResponse? Response,
     IReadOnlyCollection<EvidenceField> Evidence, AuthoritativeEvent? AuthoritativeEvent)

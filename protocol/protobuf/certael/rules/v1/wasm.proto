@@ -1,0 +1,33 @@
+syntax = "proto3";
+package certael.rules.v1;
+
+message WasmRuleInputV1 {
+  uint32 schema_version = 1;
+  string tenant_id = 2;
+  string game_id = 3;
+  string environment_id = 4;
+  string rule_id = 5;
+  string rule_version = 6;
+  bytes canonical_action = 7;
+  bytes canonical_state = 8;
+}
+
+enum WasmRuleOutcomeV1 {
+  WASM_RULE_OUTCOME_V1_UNSPECIFIED = 0;
+  WASM_RULE_OUTCOME_V1_PASS = 1;
+  WASM_RULE_OUTCOME_V1_REJECT = 2;
+  WASM_RULE_OUTCOME_V1_INDETERMINATE = 3;
+}
+
+message WasmEvidenceEntryV1 {
+  string key = 1;
+  string value = 2;
+}
+
+message WasmRuleDecisionV1 {
+  uint32 schema_version = 1;
+  WasmRuleOutcomeV1 outcome = 2;
+  string public_reason = 3;
+  uint32 bounded_risk = 4;
+  repeated WasmEvidenceEntryV1 bounded_evidence = 5;
+}

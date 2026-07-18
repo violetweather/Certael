@@ -39,14 +39,14 @@ Create a source JSON document with a validity period no longer than 32 days:
     {
       "product": "Core",
       "minimum_supported_version": "0.3.0-alpha.2",
-      "recommended_version": "0.4.0-alpha.1",
+      "recommended_version": "0.4.0-alpha.2",
       "minimum_protocol_version": 1,
       "maximum_protocol_version": 1
     },
     {
       "product": "Agent",
       "minimum_supported_version": "0.3.0-alpha.2",
-      "recommended_version": "0.3.0-alpha.3",
+      "recommended_version": "0.4.0-alpha.1",
       "minimum_protocol_version": 1,
       "maximum_protocol_version": 1
     }
@@ -68,7 +68,7 @@ dotnet run --project cli/Certael.Cli -- compatibility sign \
   compatibility.pb
 
 dotnet run --project cli/Certael.Cli -- compatibility check \
-  compatibility.pb compatibility-trust-store.json Agent 0.3.0-alpha.3 1
+  compatibility.pb compatibility-trust-store.json Agent 0.4.0-alpha.1 1
 ```
 
 The generated private key command is for local/staging exercises only. Use a

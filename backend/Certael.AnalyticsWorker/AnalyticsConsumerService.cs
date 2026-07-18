@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Security.Cryptography;
 using Certael.Persistence.Postgres;
 using Certael.Server.Events;
 using Certael.Server.Economy;
@@ -15,6 +16,10 @@ public sealed class AnalyticsConsumerService(
     ClickHouseEventProjection projection,
     PostgresEventReceiptStore receipts,
     PostgresEconomyStore economy,
+    EconomyAnalysisService economyAnalysis,
+    PostgresRelationshipStore relationships,
+    RelationshipAnalysisService relationshipAnalysis,
+    RedisEconomyProjection redisEconomy,
     PostgresTenantCatalog catalog,
     IOptions<AnalyticsWorkerOptions> options,
     ILogger<AnalyticsConsumerService> logger) : BackgroundService
@@ -45,30 +50,58 @@ public sealed class AnalyticsConsumerService(
         {
             try
             {
-                CertaelEventEnvelopeV1 envelope = CertaelEventEnvelopeV1Codec.Decode(message.Data);
+                byte[] messageData = message.Data
+                    ?? throw new CertaelEventEnvelopeException("Event envelope is missing.");
+                CertaelEventEnvelopeV1 envelope = CertaelEventEnvelopeV1Codec.Decode(messageData);
                 await EnsureAuthorizedAsync(envelope, message.Subject, stoppingToken);
-                if (!await receipts.ExistsAsync(envelope.TenantId, _options.ConsumerName,
-                        envelope.EventId, stoppingToken))
+                byte[] envelopeDigest = SHA256.HashData(messageData);
+                EventReceiptStatus receipt = await receipts.CheckAsync(envelope.TenantId,
+                    _options.ConsumerName, envelope.EventId, envelopeDigest, stoppingToken);
+                if (receipt == EventReceiptStatus.Conflict)
+                    throw new UnauthorizedEventException(
+                        "Event ID is already bound to a different canonical envelope.");
+                if (receipt == EventReceiptStatus.Missing)
                 {
                     if (string.Equals(envelope.EventType, "economy.v1", StringComparison.Ordinal))
                     {
                         EconomyEventV1 economyEvent = EconomyEventV1Codec.Decode(envelope.Payload);
                         if (economyEvent.EventId != envelope.EventId
+                            || (economyEvent.Transaction?.AuthoritativeActionId
+                                ?? economyEvent.ItemMutation!.AuthoritativeActionId) != envelope.ActionId
                             || economyEvent.TenantId != envelope.TenantId
                             || economyEvent.GameId != envelope.GameId
                             || economyEvent.EnvironmentId != envelope.EnvironmentId
                             || economyEvent.OccurredAt != envelope.OccurredAt)
                             throw new EconomyEventException("Economy payload does not match its authoritative envelope.");
                         await economy.ProjectAsync(economyEvent, stoppingToken);
+                        await projection.ProjectEconomyAsync(economyEvent, stoppingToken);
+                        await redisEconomy.ProjectAsync(economyEvent, stoppingToken);
+                        await economyAnalysis.AnalyzeAsync(economyEvent, stoppingToken);
+                    }
+                    else if (string.Equals(envelope.EventType, "relationship.v1", StringComparison.Ordinal))
+                    {
+                        RelationshipEventV1 relationship = RelationshipEventV1Codec.Decode(envelope.Payload);
+                        if (relationship.EventId != envelope.EventId
+                            || relationship.AuthoritativeActionId != envelope.ActionId
+                            || relationship.TenantId != envelope.TenantId
+                            || relationship.GameId != envelope.GameId
+                            || relationship.EnvironmentId != envelope.EnvironmentId
+                            || relationship.OccurredAt != envelope.OccurredAt)
+                            throw new EconomyEventException(
+                                "Relationship payload does not match its authoritative envelope.");
+                        await relationships.ProjectAsync(relationship, stoppingToken);
+                        await projection.ProjectRelationshipAsync(relationship, stoppingToken);
+                        await relationshipAnalysis.AnalyzeAsync(relationship, stoppingToken);
                     }
                     await projection.ProjectAsync(envelope, stoppingToken);
                     await receipts.RecordAsync(envelope.TenantId, _options.ConsumerName,
-                        envelope.EventId, stoppingToken);
+                        envelope.EventId, envelopeDigest, stoppingToken);
                 }
                 await message.AckAsync(cancellationToken: stoppingToken);
             }
             catch (Exception exception) when (exception is CertaelEventEnvelopeException
-                or EconomyEventException or UnauthorizedEventException)
+                or EconomyEventException or UnauthorizedEventException
+                or EventReceiptConflictException)
             {
                 await QuarantineAsync(message, exception, stoppingToken);
                 await message.AckTerminateAsync(cancellationToken: stoppingToken);
@@ -108,7 +141,13 @@ public sealed class AnalyticsConsumerService(
             || _options.AcknowledgementWaitSeconds is < 5 or > 600
             || _options.RetryDelaySeconds is < 1 or > 300
             || _options.RawEventRetentionDays is < 1 or > 30
-            || _options.CatalogRefreshSeconds is < 1 or > 3600)
+            || _options.DerivedAnalyticsRetentionDays is < 1 or > 90
+            || _options.CatalogRefreshSeconds is < 1 or > 3600
+            || _options.MaximumEconomyEventsPerWindow is < 1 or > 100_000
+            || _options.MaximumRelationshipEventsPerWindow is < 1 or > 100_000
+            || _options.MaximumRelationshipFindingsPerEvent is < 1 or > 1000
+            || _options.RedisEconomyRetentionDays is < 1 or > 90
+            || _options.RedisEconomyMaximumEntriesPerSubject is < 100 or > 1_000_000)
             throw new InvalidOperationException("AnalyticsWorker configuration is invalid.");
     }
 

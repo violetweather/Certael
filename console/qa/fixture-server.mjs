@@ -14,7 +14,25 @@ const cases = Array.from({ length: 36 }, (_, index) => ({
   signedPolicyId: 'economy-review', signedPolicyVersion: '2026.07.1',
   assignedTo: index % 3 === 0 ? 'operator.rivera' : null, version: 3,
   createdAt: iso(220 + index), updatedAt: iso(4 + index), resolvedAt: null,
+  category: index % 2 === 0 ? 'economy' : 'progression',
+  metadata: [{ key: 'region', type: 'Enumeration', value: index % 2 ? 'eu-west' : 'us-central', sensitive: false, searchable: true }],
+  highestRisk: 92 - index, highestConfidence: .96 - index / 100,
+  ruleIds: [index % 2 ? 'reward-velocity' : 'circular-transfer'],
+  signalFamilies: [index % 2 ? 'BehavioralAnomaly' : 'EconomyAnomaly'],
 }))
+
+const settings = {
+  scope: { tenantId: 'qa-tenant', gameId: 'arena', environmentId: 'staging' },
+  categories: [
+    { key: 'economy', displayName: 'Economy abuse', description: 'Trades, rewards, lineage, and marketplace findings.', enabled: true, sortOrder: 10, version: 2, updatedAt: iso(30) },
+    { key: 'progression', displayName: 'Progression', description: 'Impossible or repeated progression findings.', enabled: true, sortOrder: 20, version: 1, updatedAt: iso(30) },
+  ],
+  metadataDefinitions: [
+    { key: 'region', label: 'Region', type: 'Enumeration', enumerationValues: ['us-central', 'eu-west', 'ap-southeast'], sensitive: false, searchable: true, required: true, enabled: true, version: 2, updatedAt: iso(30) },
+    { key: 'marketplace_listing', label: 'Marketplace listing', type: 'Identifier', enumerationValues: [], sensitive: false, searchable: true, required: false, enabled: true, version: 1, updatedAt: iso(30) },
+    { key: 'escalated', label: 'Escalated review', type: 'Boolean', enumerationValues: [], sensitive: false, searchable: false, required: false, enabled: true, version: 1, updatedAt: iso(30) },
+  ],
+}
 
 const detail = item => ({
   case: item,
@@ -42,13 +60,26 @@ createServer((request, response) => {
     environmentId: 'staging', scopes: ['evidence:read', 'cases:read', 'cases:write', 'cases:act'],
   })
   if (url.pathname === '/bff/antiforgery') return send(response, 200, { requestToken: 'qa-browser-token' })
-  if (url.pathname === '/bff/api/cases') {
+  if (url.pathname === '/bff/api/cases/page') {
     const state = url.searchParams.get('state')
     const search = url.searchParams.get('search')?.toLowerCase()
+    const category = url.searchParams.get('category')?.toLowerCase()
+    const rule = url.searchParams.get('ruleId')?.toLowerCase()
+    const signal = url.searchParams.get('signalFamily')
     const filtered = cases.filter(item => (!state || item.state === state)
-      && (!search || `${item.title} ${item.playerSubject}`.toLowerCase().includes(search)))
-    return send(response, 200, filtered)
+      && (!search || `${item.title} ${item.playerSubject} ${JSON.stringify(item.metadata)}`.toLowerCase().includes(search))
+      && (!category || item.category.toLowerCase().includes(category))
+      && (!rule || item.ruleIds.some(value => value.toLowerCase().includes(rule)))
+      && (!signal || item.signalFamilies.includes(signal)))
+    const pageSize = Number(url.searchParams.get('pageSize') ?? 25)
+    const start = Number(url.searchParams.get('cursor') ?? 0)
+    const items = filtered.slice(start, start + pageSize)
+    return send(response, 200, { items, nextCursor: start + items.length < filtered.length ? String(start + items.length) : null,
+      hasMore: start + items.length < filtered.length })
   }
+  if (url.pathname === '/bff/api/case-settings' && request.method === 'GET') return send(response, 200, settings)
+  if (url.pathname.startsWith('/bff/api/case-settings/') && request.method === 'PUT') return send(response, 200, { ok: true })
+  if (/^\/bff\/api\/cases\/[^/]+\/metadata$/.test(url.pathname) && request.method === 'PUT') return send(response, 200, cases[0])
   const match = url.pathname.match(/^\/bff\/api\/cases\/([^/]+)$/)
   if (match) {
     const item = cases.find(value => value.caseId === match[1])

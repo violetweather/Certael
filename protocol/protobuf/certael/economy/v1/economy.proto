@@ -1,0 +1,57 @@
+syntax = "proto3";
+
+package certael.economy.v1;
+
+message EconomyLedgerLineV1 {
+  string account_id = 1;
+  string asset_id = 2;
+  sint64 quantity = 3;
+}
+
+message EconomyTransactionV1 {
+  string transaction_id = 1;
+  bytes authoritative_action_id = 2;
+  string reason_code = 3;
+  string source_account_id = 4;
+  string sink_account_id = 5;
+  repeated EconomyLedgerLineV1 lines = 6;
+}
+
+enum ItemMutationKindV1 {
+  ITEM_MUTATION_KIND_UNSPECIFIED = 0;
+  ITEM_MUTATION_KIND_CREATE = 1;
+  ITEM_MUTATION_KIND_TRANSFER = 2;
+  ITEM_MUTATION_KIND_DESTROY = 3;
+}
+
+message ItemLineageMutationV1 {
+  string mutation_id = 1;
+  bytes authoritative_action_id = 2;
+  ItemMutationKindV1 mutation_kind = 3;
+  string item_id = 4;
+  string asset_id = 5;
+  string account_id = 6;
+  optional string parent_item_id = 7;
+  string reason_code = 8;
+}
+
+enum EconomyEventKindV1 {
+  ECONOMY_EVENT_KIND_UNSPECIFIED = 0;
+  ECONOMY_EVENT_KIND_LEDGER_TRANSACTION = 1;
+  ECONOMY_EVENT_KIND_ITEM_LINEAGE_MUTATION = 2;
+}
+
+message EconomyEventV1 {
+  uint32 schema_version = 1;
+  bytes event_id = 2;
+  string tenant_id = 3;
+  string game_id = 4;
+  string environment_id = 5;
+  string player_subject = 6;
+  uint64 occurred_at_unix_millis = 7;
+  EconomyEventKindV1 kind = 8;
+  oneof body {
+    EconomyTransactionV1 transaction = 9;
+    ItemLineageMutationV1 item_mutation = 10;
+  }
+}

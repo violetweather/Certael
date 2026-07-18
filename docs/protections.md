@@ -114,11 +114,9 @@ platform rules and the game's privacy notice.
 
 ## Platform attestation
 
-`PlatformAttestationService` accepts an integration-specific
-`IPlatformAttestationVerifier`. The verifier must validate the platform vendor's
-signature, certificate chain, application identity, freshness, and exact server
-nonce. Failed attestation is environmental evidence and remains insufficient for
-permanent account action.
-
-Platform adapters are not bundled yet; each platform requires its official SDK,
-credentials, policies, and server-side verification service.
+`PlatformProofService` keeps `IPlatformIdentityVerifier` separate from
+`IPlatformAttestationVerifier`. An attestation verifier must validate the vendor
+signature or certificate chain, application identity, freshness, and exact
+server nonce. Redis-backed nonce reservation prevents cross-replica replay.
+Failed attestation is environmental evidence and remains insufficient for
+permanent account action. See [platform identity and attestation](platform-proofs.md).

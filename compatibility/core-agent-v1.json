@@ -1,14 +1,14 @@
 {
   "schema_version": 1,
   "product": "certael-core",
-  "product_version": "0.4.0-alpha.1",
+  "product_version": "0.4.0-alpha.2",
   "minimum_agent_product_version": "0.3.0-alpha.2",
   "stability": "pre-1.0",
   "core_c_abi_version": 1,
   "action_protocol_version": 1,
   "agent_protocol_version": 1,
   "agent_probe_abi_version": 1,
-  "pinned_agent_source_commit": "17a125e6f0845df7159115449648d29cee7e0864",
+  "pinned_agent_source_commit": "7c52071f3e4df15bf835744ffe2628b3f7620e54",
   "certified_engines": {
     "godot": "4.7",
     "unity": "6000.3.16f1",

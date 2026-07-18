@@ -1,13 +1,27 @@
 {
   "name": "@certael/server",
-  "version": "0.4.0-alpha.1",
+  "version": "0.4.0-alpha.2",
   "description": "Authoritative Node.js server SDK for Certael",
   "type": "module",
   "engines": { "node": ">=22" },
+  "optionalDependencies": {
+    "@certael/server-darwin-arm64": "workspace:*",
+    "@certael/server-darwin-x64": "workspace:*",
+    "@certael/server-linux-x64": "workspace:*",
+    "@certael/server-win32-x64": "workspace:*"
+  },
   "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
-  "files": ["dist/index.js", "dist/index.d.ts", "README.md"],
-  "scripts": { "build": "tsc -p tsconfig.json", "test": "node --test dist/index.test.js" },
+  "files": [
+    "dist/index.js", "dist/index.d.ts",
+    "dist/native.js", "dist/native.d.ts",
+    "dist/stores.js", "dist/stores.d.ts",
+    "dist/wasm.js", "dist/wasm.d.ts",
+    "dist/providers.js", "dist/providers.d.ts",
+    "README.md", "LICENSE"
+  ],
+  "scripts": { "build": "tsc -p tsconfig.json", "test": "node --test dist/*.test.js" },
   "devDependencies": { "@types/node": "24.10.13", "typescript": "7.0.2" },
   "license": "Apache-2.0",
-  "repository": { "type": "git", "url": "https://github.com/violetweather/Certael.git" }
+  "repository": { "type": "git", "url": "https://github.com/violetweather/Certael.git" },
+  "publishConfig": { "access": "public", "provenance": true }
 }

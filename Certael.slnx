@@ -13,6 +13,10 @@
   <Folder Name="/cli/">
     <Project Path="cli/Certael.Cli/Certael.Cli.csproj" />
   </Folder>
+  <Folder Name="/installer/">
+    <Project Path="installer/Certael.Installer/Certael.Installer.csproj" />
+    <Project Path="installer/Certael.Setup/Certael.Setup.csproj" />
+  </Folder>
   <Folder Name="/integrations/">
     <Project Path="integrations/Certael.Integrations.Steam/Certael.Integrations.Steam.csproj" />
     <Project Path="integrations/Certael.Integrations.Eos/Certael.Integrations.Eos.csproj" />

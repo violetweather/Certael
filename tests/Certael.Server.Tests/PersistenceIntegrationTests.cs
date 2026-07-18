@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using Certael.Persistence.Postgres;
+using Certael.Api;
 using Certael.Persistence.Redis;
 using Certael.Server.Actions;
 using Certael.Server.Evidence;
@@ -8,6 +9,7 @@ using Certael.Server.Agent;
 using Certael.Server.Configuration;
 using Certael.Server.Protections;
 using Certael.Server.Rules;
+using Certael.Server.Integrations;
 using Npgsql;
 using StackExchange.Redis;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -34,6 +36,77 @@ public sealed class PersistenceIntegrationTests
         await using NpgsqlDataSource dataSource = NpgsqlDataSource.Create(connectionString);
         await new PostgresMigrationRunner(dataSource).ApplyAsync(token);
         await ResetPostgres(dataSource, token);
+
+        var receipts = new PostgresEventReceiptStore(dataSource);
+        Guid receiptEvent = Guid.NewGuid();
+        byte[] receiptDigest = SHA256.HashData([1, 2, 3]);
+        Assert.Equal(EventReceiptStatus.Missing, await receipts.CheckAsync("tenant-a",
+            "analytics", receiptEvent, receiptDigest, token));
+        await receipts.RecordAsync("tenant-a", "analytics", receiptEvent, receiptDigest, token);
+        Assert.Equal(EventReceiptStatus.Duplicate, await receipts.CheckAsync("tenant-a",
+            "analytics", receiptEvent, receiptDigest, token));
+        byte[] conflictingDigest = SHA256.HashData([3, 2, 1]);
+        Assert.Equal(EventReceiptStatus.Conflict, await receipts.CheckAsync("tenant-a",
+            "analytics", receiptEvent, conflictingDigest, token));
+        await Assert.ThrowsAsync<EventReceiptConflictException>(async () =>
+            await receipts.RecordAsync("tenant-a", "analytics", receiptEvent,
+                conflictingDigest, token));
+
+        using (ECDsa economyKey = ECDsa.Create(ECCurve.NamedCurves.nistP256))
+        {
+            var economyProfile = new Certael.Server.Economy.EconomyProtectionProfile(
+                "economy-default", "1.0.0", "tenant-a", "game", "test",
+                100, 10_000, 3, TimeSpan.FromDays(7), DateTimeOffset.UtcNow.AddHours(1));
+            var signer = new Certael.Server.Economy.EconomyProtectionProfileSigner(
+                economyKey, "economy-key");
+            var economyStore = new PostgresEconomyStore(dataSource);
+            EconomyProfileSummary added = await economyStore.AddProfileAsync(
+                signer.Sign(economyProfile), economyProfile, "operator-a", token);
+            Assert.Equal(Certael.Server.Economy.EconomyProfileStage.Shadow, added.Stage);
+            EconomyProfileSummary? canary = await economyStore.DeployProfileAsync("tenant-a",
+                "game", "test", "economy-default", "1.0.0",
+                Certael.Server.Economy.EconomyProfileStage.Shadow,
+                Certael.Server.Economy.EconomyProfileStage.Canary, 25, "operator-a", token);
+            Assert.Equal(25, canary?.CanaryPercentage);
+            EconomyProfileSummary? enforced = await economyStore.DeployProfileAsync("tenant-a",
+                "game", "test", "economy-default", "1.0.0",
+                Certael.Server.Economy.EconomyProfileStage.Canary,
+                Certael.Server.Economy.EconomyProfileStage.Enforced, 0, "operator-b", token);
+            Assert.Equal(Certael.Server.Economy.EconomyProfileStage.Enforced, enforced?.Stage);
+            Assert.Null(await economyStore.DeployProfileAsync("tenant-a", "game", "other",
+                "economy-default", "1.0.0",
+                Certael.Server.Economy.EconomyProfileStage.Enforced,
+                Certael.Server.Economy.EconomyProfileStage.RolledBack, 0, "operator-b", token));
+        }
+
+        using (ECDsa relationshipKey = ECDsa.Create(ECCurve.NamedCurves.nistP256))
+        {
+            var profile = new Certael.Server.Economy.RelationshipProtectionProfile(
+                "relationship-default", "1.0.0", "tenant-a", "game", "test",
+                [7, 30, 90], 4, 3, 80, 5, DateTimeOffset.UtcNow.AddHours(1));
+            var signer = new Certael.Server.Economy.RelationshipProtectionProfileSigner(
+                relationshipKey, "relationship-key");
+            var store = new PostgresRelationshipStore(dataSource);
+            RelationshipProfileSummary added = await store.AddProfileAsync(
+                signer.Sign(profile), profile, "operator-a", token);
+            Assert.Equal(Certael.Server.Economy.EconomyProfileStage.Shadow, added.Stage);
+            RelationshipProfileSummary? canary = await store.DeployProfileAsync("tenant-a",
+                "game", "test", "relationship-default", "1.0.0",
+                Certael.Server.Economy.EconomyProfileStage.Shadow,
+                Certael.Server.Economy.EconomyProfileStage.Canary, 20, "operator-a", token);
+            Assert.Equal(20, canary?.CanaryPercentage);
+
+            var edge = new Certael.Server.Economy.RelationshipEventV1(Guid.NewGuid(),
+                Guid.NewGuid(), "tenant-a", "game", "test",
+                Certael.Server.Economy.RelationshipKind.Trade, "player-a", "player-b", 10,
+                DateTimeOffset.UtcNow);
+            await store.ProjectAsync(edge, token);
+            await store.ProjectAsync(edge, token);
+            Assert.Single(await store.LoadWindowAsync("tenant-a", "game", "test",
+                edge.OccurredAt.AddDays(-1), edge.OccurredAt.AddSeconds(1), 100, token));
+            await Assert.ThrowsAsync<Certael.Server.Economy.EconomyEventException>(async () =>
+                await store.ProjectAsync(edge with { Weight = 11 }, token));
+        }
 
         var durableTickets = new PostgresTicketRedemptionStore(dataSource);
         Assert.False(await durableTickets.TryRedeemAsync("tenant/escape", "test",
@@ -128,9 +201,12 @@ public sealed class PersistenceIntegrationTests
             await policyStore.GetAsync("tenant-b", policyClaims.PolicyId, token));
 
         using ECDsa configurationKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        var configurationKeys = new Dictionary<string, ECDsa>
+            { ["configuration-key"] = configurationKey };
         var configurationVerifier = new SignedConfigurationVerifier(
-            new RulePackVerifier(new Dictionary<string, ECDsa> { ["configuration-key"] = configurationKey }),
-            new ProtectionProfileVerifier(new Dictionary<string, ECDsa> { ["configuration-key"] = configurationKey }));
+            new RulePackVerifier(configurationKeys), new ProtectionProfileVerifier(configurationKeys),
+            new WasmRuleProfileVerifier(configurationKeys, TimeProvider.System),
+            new PlatformProofPolicyVerifier(configurationKeys, TimeProvider.System));
         var configurationStore = new PostgresSignedConfigurationStore(dataSource,
             configurationVerifier, TimeProvider.System);
         var profileCompiler = new ProtectionProfileCompiler(configurationKey, "configuration-key");
@@ -349,6 +425,15 @@ public sealed class PersistenceIntegrationTests
                 SignedConfigurationKind.ProtectionProfile, "api-tenant", "profile", "1.0.0",
                 "game", "test", [1], new byte[32], new byte[64], "key", "test"), token);
         Assert.Equal(HttpStatusCode.Unauthorized, configurationAdmin.StatusCode);
+
+        using HttpResponseMessage economyAdmin = await client.PostAsJsonAsync(
+            "/v1/economy/profiles", new SignedEconomyProfileRequest(
+                [1], new byte[64], "key", new byte[32]), token);
+        Assert.Equal(HttpStatusCode.Unauthorized, economyAdmin.StatusCode);
+        using HttpResponseMessage relationshipAdmin = await client.PostAsJsonAsync(
+            "/v1/relationships/profiles", new SignedRelationshipProfileRequest(
+                [1], new byte[64], "key", new byte[32]), token);
+        Assert.Equal(HttpStatusCode.Unauthorized, relationshipAdmin.StatusCode);
     }
 
     private static async Task ResetPostgres(NpgsqlDataSource source, CancellationToken token)
@@ -359,7 +444,10 @@ public sealed class PersistenceIntegrationTests
             "certael_signed_configurations, " +
             "certael_agent_policy_approvals, certael_agent_policies, " +
             "certael_agent_reports, certael_agent_sessions, certael_action_results, " +
-            "certael_outbox, certael_evidence, certael_sessions CASCADE");
+            "certael_relationship_profile_activity, certael_relationship_findings, " +
+            "certael_relationship_profiles, certael_relationship_edges, " +
+            "certael_economy_profile_activity, certael_economy_profiles, " +
+            "certael_event_receipts, certael_outbox, certael_evidence, certael_sessions CASCADE");
         await command.ExecuteNonQueryAsync(token);
     }
 

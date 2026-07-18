@@ -11,8 +11,13 @@
     <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.1" />
     <ProjectReference Include="../../server-sdk/Certael.Server/Certael.Server.csproj" />
     <ProjectReference Include="../../backend/Certael.Api/Certael.Api.csproj" />
+    <ProjectReference Include="../../backend/Certael.Console.Bff/Certael.Console.Bff.csproj"
+                      Aliases="consolebff" />
     <ProjectReference Include="../../cli/Certael.Cli/Certael.Cli.csproj" Aliases="certaelcli" />
+    <ProjectReference Include="../../installer/Certael.Installer/Certael.Installer.csproj" />
     <ProjectReference Include="../../backend/Certael.Persistence/Certael.Persistence.csproj" />
+    <ProjectReference Include="../../backend/Certael.Coordinator/Certael.Coordinator.csproj"
+                      Aliases="coordinator" />
     <ProjectReference Include="../../samples/reference-game/Certael.ReferenceGame.csproj" />
   </ItemGroup>
   <ItemGroup>

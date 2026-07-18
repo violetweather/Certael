@@ -21,6 +21,7 @@ using Certael.Server.Rules;
 using Certael.Server.Compatibility;
 using Certael.Server.Cases;
 using Certael.Server.Privacy;
+using Certael.Server.Integrations;
 using Certael.Api;
 using System.Text;
 using System.Text.Json;
@@ -122,8 +123,10 @@ builder.Services.AddSingleton(sp => new BootstrapTicketValidator(
 builder.Services.AddSingleton(_ => LoadAgentGrantSigner(builder.Configuration, builder.Environment));
 builder.Services.AddSingleton<AgentReportVerifier>();
 builder.Services.AddSingleton<AgentApiLifecycle>();
-builder.Services.AddSingleton<ISignedConfigurationVerifier>(_ =>
-    LoadSignedConfigurationVerifier(builder.Configuration, builder.Environment));
+builder.Services.AddSingleton<ISignedConfigurationVerifier>(service =>
+    LoadSignedConfigurationVerifier(builder.Configuration, builder.Environment,
+        service.GetRequiredService<TimeProvider>()));
+builder.Services.AddSingleton<EconomyProfileTrust>();
 
 WebApplication app = builder.Build();
 app.UseExceptionHandler();
@@ -173,6 +176,11 @@ app.MapGet("/v1/status/compatibility", (CompatibilityAdmissionGate compatibility
     });
 });
 app.MapCaseEndpoints();
+app.MapEvidenceEndpoints();
+if (app.Services.GetService<PostgresEconomyStore>() is not null)
+    app.MapEconomyEndpoints();
+if (app.Services.GetService<PostgresRelationshipStore>() is not null)
+    app.MapRelationshipEndpoints();
 app.MapPost("/v1/admin/compatibility/check", (CompatibilityCheckRequest request,
     HttpContext http, CompatibilityAdmissionGate compatibility) =>
 {
@@ -1015,7 +1023,7 @@ static AgentGrantSigner LoadAgentGrantSigner(IConfiguration configuration,
 }
 
 static ISignedConfigurationVerifier LoadSignedConfigurationVerifier(
-    IConfiguration configuration, IHostEnvironment environment)
+    IConfiguration configuration, IHostEnvironment environment, TimeProvider clock)
 {
     IConfigurationSection[] configured = configuration
         .GetSection("ConfigurationSigning:TrustedKeys").GetChildren().ToArray();
@@ -1039,7 +1047,8 @@ static ISignedConfigurationVerifier LoadSignedConfigurationVerifier(
             keys.Add(keyId, key);
         }
         return new SignedConfigurationVerifier(new RulePackVerifier(keys),
-            new ProtectionProfileVerifier(keys));
+            new ProtectionProfileVerifier(keys), new WasmRuleProfileVerifier(keys, clock),
+            new PlatformProofPolicyVerifier(keys, clock));
     }
     catch
     {
@@ -1331,6 +1340,9 @@ static void ConfigurePersistence(WebApplicationBuilder builder)
     {
         builder.Services.AddSingleton(NpgsqlDataSource.Create(postgres));
         builder.Services.AddSingleton<IConnectionMultiplexer>(_ => ConnectionMultiplexer.Connect(redis));
+        builder.Services.AddSingleton<IPlatformProofReplayStore>(service =>
+            new RedisPlatformProofReplayStore(service.GetRequiredService<IConnectionMultiplexer>(),
+                service.GetRequiredService<TimeProvider>()));
         builder.Services.AddSingleton<ITicketRedemptionStore, PostgresTicketRedemptionStore>();
         builder.Services.AddSingleton<PostgresSessionStore>();
         builder.Services.AddSingleton<ISessionAuthorizationStore>(service => service.GetRequiredService<PostgresSessionStore>());
@@ -1343,7 +1355,10 @@ static void ConfigurePersistence(WebApplicationBuilder builder)
         builder.Services.AddSingleton<ICaseStore>(service => new PostgresCaseStore(
             service.GetRequiredService<NpgsqlDataSource>(), TimeSpan.FromDays(
                 Math.Clamp(builder.Configuration.GetValue("Privacy:CaseRetentionDays", 180), 1, 180))));
+        builder.Services.AddSingleton<ICaseSettingsStore, PostgresCaseSettingsStore>();
         builder.Services.AddSingleton<IPlayerDataPrivacyStore, PostgresPlayerDataPrivacyStore>();
+        builder.Services.AddSingleton<PostgresEconomyStore>();
+        builder.Services.AddSingleton<PostgresRelationshipStore>();
         builder.Services.AddSingleton<IAgentSessionStore>(service =>
             new PostgresAgentSessionStore(service.GetRequiredService<NpgsqlDataSource>(),
                 TimeSpan.FromMinutes(builder.Configuration.GetValue(
@@ -1366,6 +1381,8 @@ static void ConfigurePersistence(WebApplicationBuilder builder)
     if (!builder.Environment.IsDevelopment())
         throw new InvalidOperationException("Postgres and Redis connection strings are required outside Development.");
     builder.Services.AddSingleton<ITicketRedemptionStore, InMemoryTicketRedemptionStore>();
+    builder.Services.AddSingleton<IPlatformProofReplayStore>(service =>
+        new InMemoryPlatformProofReplayStore(service.GetRequiredService<TimeProvider>()));
     builder.Services.AddSingleton<InMemorySessionAuthorizationStore>();
     builder.Services.AddSingleton<ISessionAuthorizationStore>(service => service.GetRequiredService<InMemorySessionAuthorizationStore>());
     builder.Services.AddSingleton<ISessionAuthorizationWriter>(service => service.GetRequiredService<InMemorySessionAuthorizationStore>());
@@ -1373,6 +1390,7 @@ static void ConfigurePersistence(WebApplicationBuilder builder)
     builder.Services.AddSingleton<IAuditStore, InMemoryAuditStore>();
     builder.Services.AddSingleton<IEvidenceStore, InMemoryEvidenceStore>();
     builder.Services.AddSingleton<ICaseStore, InMemoryCaseStore>();
+    builder.Services.AddSingleton<ICaseSettingsStore, InMemoryCaseSettingsStore>();
     builder.Services.AddSingleton<IPlayerDataPrivacyStore, EmptyPlayerDataPrivacyStore>();
     builder.Services.AddSingleton<IAgentSessionStore, InMemoryAgentSessionStore>();
     builder.Services.AddSingleton(service => LoadAgentPolicyLifecycle(builder.Configuration,
@@ -1632,7 +1650,7 @@ file sealed record AgentBuildConfiguration(
 
 file static class CertaelRelease
 {
-    public const string ProductVersion = "0.4.0-alpha.1";
+    public const string ProductVersion = "0.4.0-alpha.2";
     public const uint ActionProtocolVersion = 1;
 }
 

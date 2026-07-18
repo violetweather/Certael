@@ -169,7 +169,7 @@ Core `v0.3.0-alpha.1` adapters incorrectly required the protobuf
 protobuf omits that scalar when its value is zero, so a valid initial `ready`
 message could surface as `AGENT_HEALTH_INVALID`. Upgrade the complete engine
 package to Core `v0.3.0-alpha.2` or newer; do not replace only one native
-library. Agent `v0.3.0-alpha.3` also sends a bounded rejection health response
+library. Agent `v0.4.0-alpha.1` also sends a bounded rejection health response
 before closing admission, allowing current adapters to distinguish update,
 registration, manifest, build, and local-channel failures.
 

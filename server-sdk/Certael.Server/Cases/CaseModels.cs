@@ -22,12 +22,24 @@ public enum BoundedActionKind
     RecommendKick
 }
 
+public enum CaseMetadataType { Text, Number, Boolean, DateTime, Enumeration, Identifier }
+public enum CaseSortField { UpdatedAt, CreatedAt, Risk, Confidence, Rule, Signal }
+public enum CaseSortDirection { Ascending, Descending }
+
+public sealed record CaseMetadataValue(
+    string Key, CaseMetadataType Type, string Value, bool Sensitive = false,
+    bool Searchable = false);
+
 public sealed record CaseSummary(
     Guid CaseId, string TenantId, string GameId, string EnvironmentId,
     string PlayerSubject, string Title, string Summary, CaseState State,
     string SignedPolicyId, string SignedPolicyVersion, string? AssignedTo,
     long Version, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt,
-    DateTimeOffset? ResolvedAt);
+    DateTimeOffset? ResolvedAt, string Category = "General",
+    IReadOnlyList<CaseMetadataValue>? Metadata = null,
+    int HighestRisk = 0, double HighestConfidence = 0,
+    IReadOnlyList<string>? RuleIds = null,
+    IReadOnlyList<SignalFamily>? SignalFamilies = null);
 
 public sealed record CaseNote(
     Guid NoteId, string AuthorSubject, string Body, DateTimeOffset CreatedAt);
@@ -56,11 +68,20 @@ public sealed record CaseDetail(
 public sealed record CaseQueueQuery(
     string TenantId, string EnvironmentId, CaseState? State = null,
     string? AssignedTo = null, string? PlayerSubject = null,
-    string? Search = null, int Maximum = 100);
+    string? Search = null, int Maximum = 100, string? Category = null,
+    string? RuleId = null, SignalFamily? SignalFamily = null,
+    CaseSortField SortBy = CaseSortField.UpdatedAt,
+    CaseSortDirection SortDirection = CaseSortDirection.Descending,
+    string? Cursor = null, int PageSize = 50);
+
+public sealed record CaseQueuePage(
+    IReadOnlyList<CaseSummary> Items, string? NextCursor, bool HasMore);
 
 public interface ICaseStore
 {
     ValueTask<IReadOnlyList<CaseSummary>> SearchAsync(
+        CaseQueueQuery query, CancellationToken cancellationToken);
+    ValueTask<CaseQueuePage> SearchPageAsync(
         CaseQueueQuery query, CancellationToken cancellationToken);
     ValueTask<CaseDetail?> FindAsync(
         string tenantId, Guid caseId, CancellationToken cancellationToken);
@@ -82,4 +103,8 @@ public interface ICaseStore
         string targetType, string targetId, string reason,
         string requestedBy, string approvedBy, byte[] authorizationDigest,
         long expectedVersion, CancellationToken cancellationToken);
+    ValueTask<CaseSummary?> UpdateMetadataAsync(
+        string tenantId, Guid caseId, string category,
+        IReadOnlyList<CaseMetadataValue> metadata, string actorSubject,
+        string reason, long expectedVersion, CancellationToken cancellationToken);
 }

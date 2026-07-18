@@ -54,6 +54,7 @@ typography:
     fontWeight: 400
     lineHeight: 1.429
 rounded:
+  micro: "3px"
   control: "4px"
   overlay: "6px"
 spacing:

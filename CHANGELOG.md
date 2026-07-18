@@ -2,6 +2,36 @@
 
 All notable changes to Certael Core are documented here. Certael follows semantic versioning for public contracts; prerelease APIs may evolve only through explicit versioned contracts and feature flags.
 
+## [0.4.0-alpha.2] - 2026-07-18
+
+### Added
+
+- A managed suite installer foundation with a verbose CLI, signed suite definitions, resumable component installation, prerequisite and port diagnostics, rollback, support-bundle redaction, release Compose assembly, and a native desktop installer UI.
+- Complete Unreal Engine Blueprint surfaces for protected actions, session state, Agent challenge/report flow, bounded errors, asynchronous nodes, and game-thread-safe delegates.
+- Case metadata definitions and editable metadata values, game-scoped case categories, metadata-aware evidence/case search, rule and signal filtering, deterministic sorting, and cursor-backed case pagination.
+- Console settings for case categories and metadata schemas, with permission checks, optimistic concurrency, mandatory audit reasons, loading/empty/error states, responsive layouts, and keyboard operation.
+- Economy analysis workers and PostgreSQL/Redis/ClickHouse projections for signed profiles, exact finding receipts, relationship windows, and deterministic replay.
+- A regional continuity supervisor that renews leases, stops protected admission on expiry, redeems single-use transfer grants, and rebinds fresh Core and Agent sessions.
+
+### Changed
+
+- Steam, EOS, PlayFab, and Agones adapters now use bounded provider telemetry, authoritative identity/server verification, normalized errors, and explicit outage behavior.
+- `@certael/server` now includes platform provider adapters, PostgreSQL and Redis stores, native verifier loading, WASM execution, golden parity coverage, and typed lifecycle helpers.
+- The evidence, economy, relationship, WASM, platform-proof, and regional APIs now expose deployable persistence and endpoint implementations rather than contract-only scaffolding.
+- The authenticated console keeps dense investigation workflows finite and navigable while retaining the approved Impeccable forensic design system and WCAG 2.2 AA behavior.
+
+### Security
+
+- The coordinator requires mTLS, validates production client CAs, supports an emergency failover certificate allowlist, and preserves exclusive fenced ownership through PostgreSQL leases.
+- Platform proof replay protection is shared through Redis, while identity assertions remain explicitly distinct from nonce-bound device attestation.
+- Installer logs are verbose but redact credentials, tokens, private keys, and sensitive connection-string values from support bundles.
+
+### Compatibility
+
+- Action protocol v1 and existing engine clients remain valid.
+- Database changes are additive through migration `025`; coordinator migrations remain isolated in its control database.
+- Agent `v0.4.0-alpha.1` is the recommended compatible Agent release and is pinned by immutable source commit in release artifacts.
+
 ## [0.4.0-alpha.1] - 2026-07-17
 
 ### Added
@@ -33,4 +63,5 @@ All notable changes to Certael Core are documented here. Certael follows semanti
 
 - Certael still has no permanent-ban capability. Automated analysis creates explainable findings; signed policy thresholds open cases; operators approve only bounded actions. Game state, bans, appeals, and external moderation remain owned by the integrating game.
 
+[0.4.0-alpha.2]: https://github.com/violetweather/Certael/compare/v0.4.0-alpha.1...v0.4.0-alpha.2
 [0.4.0-alpha.1]: https://github.com/violetweather/Certael/compare/v0.3.0-alpha.2...v0.4.0-alpha.1
