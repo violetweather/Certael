@@ -61,11 +61,11 @@ jobs:
         run: node scripts/smoke-node-wasm.mjs
       - name: Build native library
         run: cargo build --release --locked -p certael-c-api
-        - name: .NET build and tests
-          run: dotnet test Certael.slnx -c Release --warnaserror
-          env:
-            AVALONIA_TELEMETRY_OPTOUT: "1"
-            CERTAEL_RUN_WASM_NATIVE_TESTS: "1"
+      - name: .NET build and tests
+        run: dotnet test Certael.slnx -c Release --warnaserror
+        env:
+          AVALONIA_TELEMETRY_OPTOUT: "1"
+          CERTAEL_RUN_WASM_NATIVE_TESTS: "1"
       - name: Unity .NET Standard compatibility
         run: dotnet build engines/unity/Runtime/Certael.Unity.csproj -c Release --warnaserror
       - name: C ABI smoke (Unix)
