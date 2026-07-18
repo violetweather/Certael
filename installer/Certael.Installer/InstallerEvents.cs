@@ -47,8 +47,7 @@ public static partial class InstallerSecretRedactor
     {
         string redacted = AssignmentPattern().Replace(value, match => $"{match.Groups[1].Value}=[REDACTED]");
         redacted = BearerPattern().Replace(redacted, "Bearer [REDACTED]");
-        return PrivateKeyPattern().Replace(redacted,
-            "-----BEGIN PRIVATE KEY-----[REDACTED]-----END PRIVATE KEY-----");
+        return PrivateKeyPattern().Replace(redacted, "[REDACTED PRIVATE KEY]");
     }
 
     private static bool IsSensitiveKey(string key) => SensitiveKeys.Any(value =>
