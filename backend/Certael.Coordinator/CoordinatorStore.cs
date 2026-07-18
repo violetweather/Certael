@@ -202,7 +202,7 @@ public sealed class CoordinatorStore(NpgsqlDataSource dataSource)
             if (!await reader.ReadAsync(cancellationToken)
                 || !StoredGrantMatches(reader, grant, signed) || !reader.IsDBNull(12)
                 || reader.GetFieldValue<DateTimeOffset>(11) <= now)
-            { await transaction.RollbackAsync(cancellationToken); return null; }
+                return null;
         }
         const string selectLease = """
             SELECT owner_region,fencing_epoch,expires_at,released_at
@@ -218,7 +218,7 @@ public sealed class CoordinatorStore(NpgsqlDataSource dataSource)
                 || reader.GetString(0) != grant.SourceRegion
                 || reader.GetInt64(1) != grant.LeaseEpoch
                 || reader.IsDBNull(3) && reader.GetFieldValue<DateTimeOffset>(2) > now)
-            { await transaction.RollbackAsync(cancellationToken); return null; }
+                return null;
         }
         long nextEpoch = checked(grant.LeaseEpoch + 1);
         DateTimeOffset nextExpiry = now.AddSeconds(30);
