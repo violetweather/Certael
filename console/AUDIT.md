@@ -1,6 +1,6 @@
 # Impeccable Audit — Certael Operator Console
 
-Final audit date: 2026-07-16
+Final audit date: 2026-07-18
 Target: `Core/console`
 Approved direction: forensic case dossier, dark-only, WCAG 2.2 AA
 
@@ -9,7 +9,7 @@ Approved direction: forensic case dossier, dark-only, WCAG 2.2 AA
 | # | Dimension | Score | Key finding |
 |---|---|---:|---|
 | 1 | Accessibility | 4 | Semantic landmarks, labeled controls, visible focus, keyboard drill-in restoration, live async status, and non-color state labels are present. |
-| 2 | Performance | 3 | The production bundle is reasonable at 117.1 kB gzip, but the application is still delivered as one route-level bundle. |
+| 2 | Performance | 3 | The production bundle is reasonable at 121.2 kB gzip, but the application is still delivered as one route-level bundle. |
 | 3 | Responsive design | 4 | Desktop master-detail, tablet reflow, narrow drill-in, text wrapping, isolated table scrolling, and 44 px controls are implemented. |
 | 4 | Theming | 4 | The locked dark palette is fully tokenized; verified foreground pairs range from 5.53:1 to 16.43:1. |
 | 5 | Anti-patterns | 4 | No gradients, glass, card grid, neon SOC styling, fake metrics, decorative risk graphics, inert controls, or unresolved hard-ban detector findings. |
@@ -40,6 +40,10 @@ Pass. The interface does not read as a generic generated dashboard. It uses a de
 
 ## Positive findings
 
+- Cursor pagination exposes explicit previous/next controls and keeps each queue page bounded to 25 cases.
+- Search now includes searchable metadata; category, rule, signal, risk, confidence, and chronology filters use labeled native controls.
+- Clicking an evidence rule returns to page one, applies that rule filter, and selects deterministic rule sorting.
+- Case metadata editing and case-taxonomy settings preserve labels, required fields, permissions, conflict versions, and audit reasons.
 - Case selection remains a native button inside a semantic list and announces current selection.
 - Narrow drill-in moves focus into the case and restores it to the originating row on return.
 - Loading, errors, empty results, mutation success, and permission failures have programmatic status.
@@ -50,14 +54,14 @@ Pass. The interface does not read as a generic generated dashboard. It uses a de
 
 ## Verification evidence
 
-- Desktop browser inspection at 1440×900.
+- Desktop browser inspection of queue, pagination, dossier, metadata editor, and settings at the default viewport.
 - Tablet browser inspection at 1024×768; header overflow found and repaired.
-- Narrow browser inspection at 390×844 for both queue and dossier drill-in.
+- Narrow browser inspection at 390×844 for queue, dossier drill-in, and the complete settings path; an unreachable mobile Settings destination was found and repaired.
 - Keyboard search shortcut verified to focus the labeled search field.
-- Large-result state inspected with 36 cases and constrained queue scrolling.
+- Large-result state inspected with 36 cases across a 25-case first page and 11-case second page.
+- Rule-click behavior verified to reset pagination, apply `circular-transfer`, and switch sorting to Rule.
 - Authentication loading and BFF failure states inspected.
-- `detect.mjs --scope type src`: zero findings.
-- `detect.mjs --scope layout src`: zero findings.
+- `detect.mjs --json src/App.tsx src/styles/app.css src/styles/tokens.css`: zero findings.
 - `tsc -b && vite build`: passes.
 
 ## Recommended action

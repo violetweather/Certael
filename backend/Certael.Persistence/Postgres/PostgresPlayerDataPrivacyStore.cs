@@ -57,6 +57,42 @@ public sealed class PostgresPlayerDataPrivacyStore(NpgsqlDataSource dataSource)
                 FROM certael_action_results r
                 JOIN certael_sessions s ON s.session_id=r.session_id
                 WHERE s.tenant_id=$1 AND s.environment_id=$2 AND s.player_subject=$3
+                UNION ALL
+                SELECT e.occurred_at, jsonb_build_object('kind','economy-event','data',to_jsonb(e))
+                FROM certael_economy_events e
+                WHERE e.tenant_id=$1 AND e.environment_id=$2 AND e.player_subject=$3
+                UNION ALL
+                SELECT l.occurred_at, jsonb_build_object('kind','economy-ledger-line','data',to_jsonb(l))
+                FROM certael_economy_ledger_lines l
+                JOIN certael_economy_events e
+                  ON e.tenant_id=l.tenant_id AND e.event_id=l.event_id
+                WHERE e.tenant_id=$1 AND e.environment_id=$2 AND e.player_subject=$3
+                UNION ALL
+                SELECT i.occurred_at, jsonb_build_object('kind','item-lineage','data',to_jsonb(i))
+                FROM certael_item_lineage i
+                JOIN certael_economy_events e
+                  ON e.tenant_id=i.tenant_id AND e.event_id=i.event_id
+                WHERE e.tenant_id=$1 AND e.environment_id=$2 AND e.player_subject=$3
+                UNION ALL
+                SELECT f.created_at, jsonb_build_object('kind','economy-finding','data',to_jsonb(f))
+                FROM certael_economy_findings f
+                WHERE f.tenant_id=$1 AND f.environment_id=$2
+                  AND EXISTS (SELECT 1 FROM certael_economy_events e
+                    WHERE e.tenant_id=f.tenant_id AND e.environment_id=f.environment_id
+                      AND e.player_subject=$3 AND e.event_id=ANY(f.event_ids))
+                UNION ALL
+                SELECT r.occurred_at, jsonb_build_object('kind','relationship-edge','data',to_jsonb(r))
+                FROM certael_relationship_edges r
+                WHERE r.tenant_id=$1 AND r.environment_id=$2
+                  AND (r.source_subject=$3 OR r.target_subject=$3)
+                UNION ALL
+                SELECT f.created_at, jsonb_build_object('kind','relationship-finding','data',to_jsonb(f))
+                FROM certael_relationship_findings f
+                WHERE f.tenant_id=$1 AND f.environment_id=$2
+                  AND EXISTS (SELECT 1 FROM certael_relationship_edges r
+                    WHERE r.tenant_id=f.tenant_id AND r.environment_id=f.environment_id
+                      AND (r.source_subject=$3 OR r.target_subject=$3)
+                      AND r.event_id=ANY(f.event_ids))
             ) records
             ORDER BY ordering
             """;
@@ -137,6 +173,37 @@ public sealed class PostgresPlayerDataPrivacyStore(NpgsqlDataSource dataSource)
               )
             """;
         await using (var command = new NpgsqlCommand(deleteOutbox, connection, transaction))
+        {
+            command.Parameters.AddWithValue(tenantId);
+            command.Parameters.AddWithValue(environmentId);
+            command.Parameters.AddWithValue(playerSubject);
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        const string deleteEconomy = """
+            WITH player_events AS (
+              SELECT event_id FROM certael_economy_events
+              WHERE tenant_id=$1 AND environment_id=$2 AND player_subject=$3
+            ), relationship_events AS (
+              SELECT event_id FROM certael_relationship_edges
+              WHERE tenant_id=$1 AND environment_id=$2
+                AND (source_subject=$3 OR target_subject=$3)
+            ), deleted_findings AS (
+              DELETE FROM certael_economy_findings
+              WHERE tenant_id=$1 AND environment_id=$2
+                AND event_ids && ARRAY(SELECT event_id FROM player_events)
+            ), deleted_relationship_findings AS (
+              DELETE FROM certael_relationship_findings
+              WHERE tenant_id=$1 AND environment_id=$2
+                AND event_ids && ARRAY(SELECT event_id FROM relationship_events)
+            ), deleted_relationships AS (
+              DELETE FROM certael_relationship_edges
+              WHERE tenant_id=$1 AND environment_id=$2
+                AND (source_subject=$3 OR target_subject=$3)
+            )
+            DELETE FROM certael_economy_events
+            WHERE tenant_id=$1 AND environment_id=$2 AND player_subject=$3
+            """;
+        await using (var command = new NpgsqlCommand(deleteEconomy, connection, transaction))
         {
             command.Parameters.AddWithValue(tenantId);
             command.Parameters.AddWithValue(environmentId);

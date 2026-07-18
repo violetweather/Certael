@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+package certael.economy.v1;
+
+enum RelationshipKindV1 {
+  RELATIONSHIP_KIND_UNSPECIFIED = 0;
+  RELATIONSHIP_KIND_MATCH = 1;
+  RELATIONSHIP_KIND_OUTCOME = 2;
+  RELATIONSHIP_KIND_TRADE = 3;
+  RELATIONSHIP_KIND_GIFT = 4;
+  RELATIONSHIP_KIND_MARKETPLACE = 5;
+  RELATIONSHIP_KIND_REWARD = 6;
+  RELATIONSHIP_KIND_PARTY = 7;
+}
+
+message RelationshipEventV1 {
+  uint32 schema_version = 1;
+  bytes event_id = 2;
+  bytes authoritative_action_id = 3;
+  string tenant_id = 4;
+  string game_id = 5;
+  string environment_id = 6;
+  RelationshipKindV1 kind = 7;
+  string source_subject = 8;
+  string target_subject = 9;
+  sint64 weight = 10;
+  uint64 occurred_at_unix_millis = 11;
+}

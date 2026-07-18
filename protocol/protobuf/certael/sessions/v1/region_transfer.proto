@@ -1,0 +1,18 @@
+syntax = "proto3";
+package certael.sessions.v1;
+
+message RegionTransferGrantV1 {
+  uint32 schema_version = 1;
+  bytes grant_id = 2;
+  string tenant_id = 3;
+  string game_id = 4;
+  string environment_id = 5;
+  string match_id = 6;
+  string player_subject = 7;
+  string source_region = 8;
+  string destination_region = 9;
+  uint64 lease_epoch = 10;
+  bytes nonce = 11;
+  uint64 issued_at_unix_milliseconds = 12;
+  uint64 expires_at_unix_milliseconds = 13;
+}

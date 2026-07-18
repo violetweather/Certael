@@ -1,10 +1,17 @@
 using System.Security.Cryptography;
 using Certael.Server.Protections;
 using Certael.Server.Rules;
+using Certael.Server.Integrations;
 
 namespace Certael.Server.Configuration;
 
-public enum SignedConfigurationKind { RulePack = 1, ProtectionProfile = 2 }
+public enum SignedConfigurationKind
+{
+    RulePack = 1,
+    ProtectionProfile = 2,
+    WasmRuleProfile = 3,
+    PlatformProofPolicy = 4
+}
 public enum SignedConfigurationStage { Draft, Shadow, Canary, Enforced, Retired }
 
 public sealed record SignedConfigurationArtifact(
@@ -22,6 +29,23 @@ public sealed record SignedConfigurationArtifact(
         value.Profile.Version, value.Profile.GameId, value.Profile.EnvironmentId,
         value.CanonicalDocument, value.Digest, value.Signature, value.SigningKeyId);
 
+    public static SignedConfigurationArtifact From(SignedWasmRuleProfile value)
+    {
+        WasmRuleProfile profile = WasmRuleProfileSigner.DecodeCanonical(value.CanonicalProfile);
+        return new(SignedConfigurationKind.WasmRuleProfile, profile.TenantId, profile.ProfileId,
+            profile.Version, profile.GameId, profile.EnvironmentId, value.CanonicalProfile,
+            value.Digest, value.Signature, value.KeyId);
+    }
+
+    public static SignedConfigurationArtifact From(SignedPlatformProofPolicy value)
+    {
+        PlatformProofPolicyProfile profile = PlatformProofPolicySigner.DecodeCanonical(
+            value.CanonicalPolicy);
+        return new(SignedConfigurationKind.PlatformProofPolicy, profile.TenantId,
+            profile.PolicyId, profile.Version, profile.GameId, profile.EnvironmentId,
+            value.CanonicalPolicy, value.Digest, value.Signature, value.KeyId);
+    }
+
     public SignedRulePack ToRulePack() => Kind == SignedConfigurationKind.RulePack
         ? new(RulePackCanonicalCodec.Deserialize(CanonicalDocument), CanonicalDocument, Digest,
             Signature, SigningKeyId)
@@ -32,6 +56,16 @@ public sealed record SignedConfigurationArtifact(
             ? new(ProtectionProfileCompiler.DeserializeCanonical(CanonicalDocument),
                 CanonicalDocument, Digest, Signature, SigningKeyId)
             : throw new SignedConfigurationException("Artifact is not a protection profile.");
+
+    public SignedWasmRuleProfile ToWasmRuleProfile() =>
+        Kind == SignedConfigurationKind.WasmRuleProfile
+            ? new(CanonicalDocument, Signature, SigningKeyId, Digest)
+            : throw new SignedConfigurationException("Artifact is not a WASM rule profile.");
+
+    public SignedPlatformProofPolicy ToPlatformProofPolicy() =>
+        Kind == SignedConfigurationKind.PlatformProofPolicy
+            ? new(CanonicalDocument, Signature, SigningKeyId, Digest)
+            : throw new SignedConfigurationException("Artifact is not a platform proof policy.");
 }
 
 public sealed record SignedConfigurationApproval(
@@ -49,26 +83,66 @@ public interface ISignedConfigurationVerifier
 
 public sealed class SignedConfigurationVerifier(
     RulePackVerifier rulePacks,
-    ProtectionProfileVerifier protectionProfiles) : ISignedConfigurationVerifier
+    ProtectionProfileVerifier protectionProfiles,
+    WasmRuleProfileVerifier wasmRules,
+    PlatformProofPolicyVerifier platformProofs) : ISignedConfigurationVerifier
 {
     public bool Verify(SignedConfigurationArtifact artifact)
     {
         try
         {
-            return artifact.Kind switch
+            bool signature = artifact.Kind switch
             {
                 SignedConfigurationKind.RulePack => rulePacks.Verify(artifact.ToRulePack()),
                 SignedConfigurationKind.ProtectionProfile =>
                     protectionProfiles.Verify(artifact.ToProtectionProfile()),
+                SignedConfigurationKind.WasmRuleProfile =>
+                    wasmRules.Verify(artifact.ToWasmRuleProfile()),
+                SignedConfigurationKind.PlatformProofPolicy =>
+                    platformProofs.Verify(artifact.ToPlatformProofPolicy()),
                 _ => false
             };
+            return signature && MetadataMatches(artifact);
         }
         catch (Exception error) when (error is RulePackValidationException
-            or ProtectionProfileException or SignedConfigurationException)
+            or ProtectionProfileException or WasmRuleException
+            or PlatformProofException or SignedConfigurationException)
         {
             return false;
         }
     }
+
+    private static bool MetadataMatches(SignedConfigurationArtifact artifact) =>
+        artifact.Kind switch
+        {
+            SignedConfigurationKind.RulePack => Matches(artifact,
+                artifact.ToRulePack().Document.TenantId,
+                artifact.ToRulePack().Document.PackId,
+                artifact.ToRulePack().Document.Version,
+                artifact.ToRulePack().Document.GameId,
+                artifact.ToRulePack().Document.EnvironmentId),
+            SignedConfigurationKind.ProtectionProfile => Matches(artifact,
+                artifact.ToProtectionProfile().Profile.TenantId,
+                artifact.ToProtectionProfile().Profile.ProfileId,
+                artifact.ToProtectionProfile().Profile.Version,
+                artifact.ToProtectionProfile().Profile.GameId,
+                artifact.ToProtectionProfile().Profile.EnvironmentId),
+            SignedConfigurationKind.WasmRuleProfile => WasmRuleProfileSigner.DecodeCanonical(
+                artifact.CanonicalDocument) is { } profile && Matches(artifact,
+                    profile.TenantId, profile.ProfileId, profile.Version,
+                    profile.GameId, profile.EnvironmentId),
+            SignedConfigurationKind.PlatformProofPolicy =>
+                PlatformProofPolicySigner.DecodeCanonical(artifact.CanonicalDocument) is { } policy
+                && Matches(artifact, policy.TenantId, policy.PolicyId, policy.Version,
+                    policy.GameId, policy.EnvironmentId),
+            _ => false
+        };
+
+    private static bool Matches(SignedConfigurationArtifact artifact, string tenantId,
+        string artifactId, string version, string gameId, string environmentId) =>
+        artifact.TenantId == tenantId && artifact.ArtifactId == artifactId
+        && artifact.Version == version && artifact.GameId == gameId
+        && artifact.EnvironmentId == environmentId;
 }
 
 public interface ISignedConfigurationAdministration

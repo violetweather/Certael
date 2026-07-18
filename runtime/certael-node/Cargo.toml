@@ -10,5 +10,6 @@ crate-type = ["cdylib"]
 
 [dependencies]
 certael-core = { path = "../certael-core" }
+certael-wasm = { path = "../certael-wasm" }
 napi = { version = "3", default-features = false, features = ["napi8"] }
 napi-derive = "3"

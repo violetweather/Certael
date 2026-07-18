@@ -2,7 +2,7 @@ name: release
 
 on:
   push:
-    tags: ["v0.*"]
+    tags: ["v*"]
 
 permissions:
   contents: read
@@ -16,8 +16,20 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with: { node-version: 22 }
       - run: corepack enable
-      - run: pnpm install --frozen-lockfile && pnpm run build && pnpm run test && pnpm pack --pack-destination ../../artifacts
+      - run: pnpm install --frozen-lockfile && pnpm run build && pnpm run test
         working-directory: server-sdk/typescript
+      - name: Pack versioned TypeScript SDK
+        shell: bash
+        working-directory: server-sdk/typescript
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          cp ../../LICENSE LICENSE
+          npm version "$version" --no-git-tag-version --allow-same-version
+          for package in native/*; do
+            npm --prefix "$package" version "$version" --no-git-tag-version --allow-same-version
+          done
+          pnpm pack --pack-destination ../../artifacts
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with: { name: certael-typescript, path: artifacts, if-no-files-found: error }
 
@@ -29,19 +41,27 @@ jobs:
           - os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
             library: libcertael_c_api.so
+            wasm_library: libcertael_wasm.so
             artifact: linux-x86_64
+            node_package: linux-x64
           - os: windows-2025
             target: x86_64-pc-windows-msvc
             library: certael_c_api.dll
+            wasm_library: certael_wasm.dll
             artifact: windows-x86_64
+            node_package: win32-x64
           - os: macos-15
             target: aarch64-apple-darwin
             library: libcertael_c_api.dylib
+            wasm_library: libcertael_wasm.dylib
             artifact: macos-arm64
+            node_package: darwin-arm64
           - os: macos-15
             target: x86_64-apple-darwin
             library: libcertael_c_api.dylib
+            wasm_library: libcertael_wasm.dylib
             artifact: macos-x86_64
+            node_package: darwin-x64
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
@@ -54,15 +74,18 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           repository: violetweather/Certael-Agent
-          ref: 17a125e6f0845df7159115449648d29cee7e0864
+          ref: 7c52071f3e4df15bf835744ffe2628b3f7620e54
           path: certael-agent-source
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
         with:
           toolchain: 1.97.0
           targets: ${{ matrix.target }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with: { node-version: 22 }
       - run: cargo build --locked --release -p certael-c-api --target ${{ matrix.target }}
       - run: cargo build --locked --release -p certael-node --target ${{ matrix.target }}
+      - run: cargo build --locked --release -p certael-wasm --target ${{ matrix.target }}
       - name: Build pinned Agent probe
         run: cargo build --locked --release --manifest-path certael-agent-source/Cargo.toml -p certael-agent-probe --target ${{ matrix.target }}
       - name: Assemble native package
@@ -75,9 +98,10 @@ jobs:
           cp LICENSE "artifacts/certael-native-${{ matrix.artifact }}/LICENSE"
           cp certael-agent-source/LICENSE "artifacts/certael-native-${{ matrix.artifact }}/CERTAEL_AGENT_LICENSE"
           printf '%s\n' "$GITHUB_SHA" > "artifacts/certael-native-${{ matrix.artifact }}/SOURCE_COMMIT"
-          printf '%s\n' '17a125e6f0845df7159115449648d29cee7e0864' > "artifacts/certael-native-${{ matrix.artifact }}/AGENT_SOURCE_COMMIT"
+          printf '%s\n' '7c52071f3e4df15bf835744ffe2628b3f7620e54' > "artifacts/certael-native-${{ matrix.artifact }}/AGENT_SOURCE_COMMIT"
           cp compatibility/core-agent-v1.json "artifacts/certael-native-${{ matrix.artifact }}/"
           cp "target/${{ matrix.target }}/release/${{ matrix.library }}" "artifacts/certael-native-${{ matrix.artifact }}/lib/"
+          cp "target/${{ matrix.target }}/release/${{ matrix.wasm_library }}" "artifacts/certael-native-${{ matrix.artifact }}/lib/"
           if [[ "${{ runner.os }}" == "Windows" ]]; then
             cp "target/${{ matrix.target }}/release/certael_node.dll" "artifacts/certael-native-${{ matrix.artifact }}/lib/certael_node.node"
           elif [[ "${{ runner.os }}" == "Linux" ]]; then
@@ -98,6 +122,31 @@ jobs:
               cp "certael-agent-source/target/${{ matrix.target }}/release/libcertael_agent_probe.dylib" "artifacts/certael-native-${{ matrix.artifact }}/lib/"
             fi
           fi
+      - name: Pack platform Node verifier
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          package="server-sdk/typescript/native/${{ matrix.node_package }}"
+          mkdir -p "artifacts/certael-native-${{ matrix.artifact }}/npm"
+          cp "artifacts/certael-native-${{ matrix.artifact }}/lib/certael_node.node" \
+            "$package/certael_node.node"
+          cp LICENSE "$package/LICENSE"
+          npm --prefix "$package" version "$version" --no-git-tag-version --allow-same-version
+          npm pack "$package" --pack-destination \
+            "artifacts/certael-native-${{ matrix.artifact }}/npm"
+      - name: Load Node verifier on matching host
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected_os="${{ matrix.node_package }}"
+          host="$(node -p 'process.platform + "-" + process.arch')"
+          if [[ "$host" != "$expected_os" ]]; then
+            echo "Skipping load test for cross-built $expected_os on $host"
+            exit 0
+          fi
+          node -e 'const addon=require(require("node:path").resolve(process.argv[1])); if(addon.certaelNodeAbiVersion()!==2||typeof addon.verifyActionEnvelope!=="function"||typeof addon.evaluateWasmRule!=="function") throw new Error("invalid Certael Node ABI")' \
+            "artifacts/certael-native-${{ matrix.artifact }}/lib/certael_node.node"
       - uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661
         with: { subject-path: "artifacts/certael-native-${{ matrix.artifact }}/**" }
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -118,10 +167,16 @@ jobs:
       - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
         with: { dotnet-version: 10.0.x }
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
-        with: { toolchain: 1.97.0 }
+        with:
+          toolchain: 1.97.0
+          targets: wasm32-unknown-unknown
       - name: Build native runtime for managed adapter tests
-        run: cargo build --locked --release -p certael-c-api
+        run: |
+          cargo build --locked --release -p certael-c-api -p certael-wasm
+          cargo build --locked --release --target wasm32-unknown-unknown -p certael-reference-repeated-reward-rule
       - run: dotnet test Certael.slnx -c Release --warnaserror
+        env:
+          CERTAEL_RUN_WASM_NATIVE_TESTS: "1"
       - run: dotnet pack server-sdk/Certael.Server/Certael.Server.csproj -c Release -o artifacts
       - run: |
           dotnet pack integrations/Certael.Integrations.Steam/Certael.Integrations.Steam.csproj -c Release -o artifacts
@@ -138,6 +193,123 @@ jobs:
         with: { subject-path: "artifacts/**" }
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with: { name: certael-managed, path: artifacts, if-no-files-found: error }
+
+  wasm-rules:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with: { persist-credentials: false }
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
+        with:
+          toolchain: 1.97.0
+          targets: wasm32-unknown-unknown
+      - run: cargo test --release --locked -p certael-wasm-guest -p certael-wasm
+      - run: cargo build --release --locked --target wasm32-unknown-unknown -p certael-reference-repeated-reward-rule
+      - run: cargo run --release --locked -p certael-wasm-check -- target/wasm32-unknown-unknown/release/certael_reference_repeated_reward_rule.wasm
+      - name: Assemble WASM guest kit
+        run: |
+          set -euo pipefail
+          root="artifacts/certael-wasm-${GITHUB_REF_NAME}"
+          mkdir -p "$root/guest-sdk" "$root/reference" "$root/schemas"
+          cp -R runtime/certael-wasm-guest/. "$root/guest-sdk/"
+          cp samples/wasm-rules/repeated-reward/Cargo.toml "$root/reference/"
+          cp -R samples/wasm-rules/repeated-reward/src "$root/reference/"
+          cp target/wasm32-unknown-unknown/release/certael_reference_repeated_reward_rule.wasm \
+            "$root/reference/repeated-reward.wasm"
+          cp protocol/protobuf/certael/rules/v1/wasm.proto "$root/schemas/"
+          cp docs/wasm-rules.md "$root/README.md"
+          cp LICENSE "$root/LICENSE"
+          printf '%s\n' "$GITHUB_SHA" > "$root/SOURCE_COMMIT"
+          (cd artifacts && zip -qr "certael-wasm-guest-${GITHUB_REF_NAME}.zip" "certael-wasm-${GITHUB_REF_NAME}")
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: certael-wasm
+          path: artifacts/certael-wasm-guest-${{ github.ref_name }}.zip
+          if-no-files-found: error
+
+  suite-managed:
+    needs: [typescript]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with: { persist-credentials: false }
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
+        with: { dotnet-version: 10.0.x }
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with: { node-version: 22 }
+      - run: corepack enable
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with: { name: certael-typescript, path: suite-input/typescript }
+      - name: Assemble installer-ready managed components
+        shell: pwsh
+        run: |
+          $package = Get-ChildItem suite-input/typescript -Recurse -File -Filter *.tgz |
+            Select-Object -First 1
+          if (-not $package) { throw "TypeScript package artifact is missing" }
+          $version = $env:GITHUB_REF_NAME.Substring(1)
+          ./scripts/assemble-suite-managed.ps1 `
+            -Version $version `
+            -OutputRoot suite-release `
+            -TypeScriptPackage $package.FullName
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: certael-suite-managed
+          path: suite-release/*.zip
+          if-no-files-found: error
+
+  setup-desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2025
+            rid: win-x64
+            archive: certael-setup-win-x64
+          - os: ubuntu-24.04
+            rid: linux-x64
+            archive: certael-setup-linux-x64
+          - os: macos-15
+            rid: osx-arm64
+            archive: certael-setup-osx-arm64
+          - os: macos-15
+            rid: osx-x64
+            archive: certael-setup-osx-x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with: { persist-credentials: false }
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
+        with: { dotnet-version: 10.0.x }
+      - name: Publish self-contained setup application
+        run: >-
+          dotnet publish installer/Certael.Setup/Certael.Setup.csproj
+          -c Release -r ${{ matrix.rid }} --self-contained true
+          -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
+          -p:PublishTrimmed=false -o setup-publish
+        env:
+          AVALONIA_TELEMETRY_OPTOUT: "1"
+      - name: Smoke setup application
+        if: runner.os != 'Windows'
+        run: ./setup-publish/Certael.Setup --self-test
+      - name: Smoke setup application (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $process = Start-Process -FilePath ./setup-publish/Certael.Setup.exe `
+            -ArgumentList --self-test -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Certael Setup self-test failed" }
+      - name: Package setup application (Unix)
+        if: runner.os != 'Windows'
+        run: tar -C setup-publish -czf "${{ matrix.archive }}-${{ github.ref_name }}.tar.gz" .
+      - name: Package setup application (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path setup-publish/* -DestinationPath "${{ matrix.archive }}-${{ github.ref_name }}.zip"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ${{ matrix.archive }}
+          path: certael-setup-*
+          if-no-files-found: error
 
   godot:
     strategy:
@@ -172,7 +344,7 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           repository: violetweather/Certael-Agent
-          ref: 17a125e6f0845df7159115449648d29cee7e0864
+          ref: 7c52071f3e4df15bf835744ffe2628b3f7620e54
           path: certael-agent-source
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
@@ -204,7 +376,7 @@ jobs:
             cp "$GITHUB_WORKSPACE/certael-agent-source/target/${{ matrix.target }}/release/libcertael_agent_probe.dylib" \
               "addons/certael/bin/libcertael_agent_probe.macos.${{ matrix.arch }}.dylib"
           fi
-          printf '%s\n' '17a125e6f0845df7159115449648d29cee7e0864' > addons/certael/bin/AGENT_SOURCE_COMMIT
+          printf '%s\n' '7c52071f3e4df15bf835744ffe2628b3f7620e54' > addons/certael/bin/AGENT_SOURCE_COMMIT
           cp "$GITHUB_WORKSPACE/certael-agent-source/LICENSE" addons/certael/bin/CERTAEL_AGENT_LICENSE
       - name: Build Godot adapter with MSVC
         if: runner.os == 'Windows'
@@ -252,7 +424,7 @@ jobs:
             Copy-Item "$env:GITHUB_WORKSPACE\certael-agent-source\target\${{ matrix.target }}\release\certael_agent_probe.dll" `
               "addons/certael/bin/certael_agent_probe.dll" -Force
             Set-Content -Path "addons/certael/bin/AGENT_SOURCE_COMMIT" `
-              -Value "17a125e6f0845df7159115449648d29cee7e0864" -NoNewline
+              -Value "7c52071f3e4df15bf835744ffe2628b3f7620e54" -NoNewline
             Copy-Item "$env:GITHUB_WORKSPACE\certael-agent-source\LICENSE" `
               "addons/certael/bin/CERTAEL_AGENT_LICENSE" -Force
           }
@@ -266,6 +438,20 @@ jobs:
           if-no-files-found: error
 
   container:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: certael-api
+            dockerfile: backend/Certael.Api/Dockerfile
+          - image: certael-event-worker
+            dockerfile: backend/Certael.EventWorker/Dockerfile
+          - image: certael-analytics-worker
+            dockerfile: backend/Certael.AnalyticsWorker/Dockerfile
+          - image: certael-console
+            dockerfile: backend/Certael.Console.Bff/Dockerfile
+          - image: certael-coordinator
+            dockerfile: backend/Certael.Coordinator/Dockerfile
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -282,25 +468,25 @@ jobs:
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
         with:
           context: .
-          file: backend/Certael.Api/Dockerfile
+          file: ${{ matrix.dockerfile }}
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: ghcr.io/${{ github.repository_owner }}/certael-api:${{ github.ref_name }}
+          tags: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:${{ github.ref_name }}
           build-args: SOURCE_REVISION=${{ github.sha }}
           provenance: mode=max
           sbom: true
       - uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661
         with:
-          subject-name: ghcr.io/${{ github.repository_owner }}/certael-api
+          subject-name: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
         with: { cosign-release: v3.0.6 }
       - name: Sign container by immutable digest
-        run: cosign sign --yes "ghcr.io/${{ github.repository_owner }}/certael-api@${{ steps.build.outputs.digest }}"
+        run: cosign sign --yes "ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}@${{ steps.build.outputs.digest }}"
 
   publish:
-    needs: [typescript, native, managed, godot, container]
+    needs: [typescript, native, managed, wasm-rules, suite-managed, setup-desktop, godot, container]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -309,6 +495,11 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with: { persist-credentials: false }
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: certael-setup-*
+          path: downloaded/setup-desktop
+          merge-multiple: true
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           pattern: certael-*
@@ -329,9 +520,13 @@ jobs:
           cp compatibility/core-agent-v1.json staging/unreal/compatibility-v1.json
           printf '%s\n' "$GITHUB_SHA" | tee staging/godot/SOURCE_COMMIT staging/unity/SOURCE_COMMIT staging/unreal/SOURCE_COMMIT >/dev/null
           cp -R engines/godot/addons/certael staging/godot/addons/
+          sed -i "s/^version=.*/version=\"${version}\"/" staging/godot/addons/certael/plugin.cfg
           mkdir -p staging/godot/addons/certael/bin
           find downloaded/certael-godot-* -type f -exec cp {} staging/godot/addons/certael/bin/ \;
           cp -R engines/unity/. staging/unity/
+          jq --arg version "$version" '.version = $version' \
+            staging/unity/package.json > staging/unity/package.json.tmp
+          mv staging/unity/package.json.tmp staging/unity/package.json
           mkdir -p staging/unity/Runtime/Plugins/{Windows,Linux} staging/unity/Runtime/Plugins/macOS/{arm64,x86_64}
           cp downloaded/certael-native-windows-x86_64/lib/certael_c_api.dll staging/unity/Runtime/Plugins/Windows/
           cp downloaded/certael-native-windows-x86_64/lib/certael_agent_probe.dll staging/unity/Runtime/Plugins/Windows/
@@ -344,10 +539,15 @@ jobs:
           cp downloaded/certael-native-linux-x86_64/CERTAEL_AGENT_LICENSE staging/unity/CERTAEL_AGENT_LICENSE
           cp downloaded/certael-native-linux-x86_64/AGENT_SOURCE_COMMIT staging/unity/AGENT_SOURCE_COMMIT
           cp -R engines/unreal/Certael/. staging/unreal/
+          jq --arg version "$version" --argjson build "$GITHUB_RUN_NUMBER" \
+            '.Version = $build | .VersionName = $version' \
+            staging/unreal/Certael.uplugin > staging/unreal/Certael.uplugin.tmp
+          mv staging/unreal/Certael.uplugin.tmp staging/unreal/Certael.uplugin
           mkdir -p staging/unreal/Native/{include,Win64,Linux} staging/unreal/Native/Mac/{arm64,x86_64} staging/unreal/Binaries/Win64
           cp downloaded/certael-native-linux-x86_64/include/* staging/unreal/Native/include/
           cp downloaded/certael-native-windows-x86_64/lib/* staging/unreal/Native/Win64/
           cp downloaded/certael-native-windows-x86_64/lib/certael_c_api.dll staging/unreal/Binaries/Win64/
+          cp downloaded/certael-native-windows-x86_64/lib/certael_agent_probe.dll staging/unreal/Binaries/Win64/
           cp downloaded/certael-native-linux-x86_64/lib/* staging/unreal/Native/Linux/
           cp downloaded/certael-native-macos-arm64/lib/*.a staging/unreal/Native/Mac/arm64/
           cp downloaded/certael-native-macos-x86_64/lib/*.a staging/unreal/Native/Mac/x86_64/
@@ -356,8 +556,53 @@ jobs:
           mkdir -p release
           (cd staging/godot && zip -qr "../../release/certael-godot-4.7-${GITHUB_REF_NAME}.zip" .)
           (cd staging/unity && tar -czf "../../release/certael-unity-6000.3-${GITHUB_REF_NAME}.tgz" .)
-          (cd staging/unreal && zip -qr "../../release/certael-unreal-5.8-${GITHUB_REF_NAME}.zip" .)
-      - name: Archive and checksum
+          mkdir -p standalone-unreal/Certael
+          cp -R staging/unreal/. standalone-unreal/Certael/
+          (cd standalone-unreal && zip -qr "../release/certael-unreal-5.8-${GITHUB_REF_NAME}.zip" Certael)
+          unzip -Z1 "release/certael-unreal-5.8-${GITHUB_REF_NAME}.zip" | grep -Fxq 'Certael/Certael.uplugin'
+          test "$(jq -r .VersionName standalone-unreal/Certael/Certael.uplugin)" = "$version"
+          mkdir -p suite-staging/godot-adapter/engines/godot \
+            suite-staging/unity-adapter/engines/unity \
+            suite-staging/unreal-adapter/engines/unreal/Certael
+          cp -R staging/godot/. suite-staging/godot-adapter/engines/godot/
+          cp -R staging/unity/. suite-staging/unity-adapter/engines/unity/
+          cp -R staging/unreal/. suite-staging/unreal-adapter/engines/unreal/Certael/
+          (cd suite-staging/godot-adapter && zip -qr "../../release/certael-godot-adapter-any-${GITHUB_REF_NAME}.zip" .)
+          (cd suite-staging/unity-adapter && zip -qr "../../release/certael-unity-adapter-any-${GITHUB_REF_NAME}.zip" .)
+          (cd suite-staging/unreal-adapter && zip -qr "../../release/certael-unreal-adapter-any-${GITHUB_REF_NAME}.zip" .)
+
+          package_native_component() {
+            source="$1"
+            rid="$2"
+            node_library="$3"
+            for component in native-runtime server-sdk-native; do
+              payload="suite-staging/${component}-${rid}"
+              if [[ "$component" == "native-runtime" ]]; then
+                destination="$payload/runtime/client/$rid"
+              else
+                destination="$payload/sdk/native/$rid"
+              fi
+              mkdir -p "$destination" "$payload/licenses/$component"
+              cp -R "$source"/. "$destination/"
+              cp LICENSE "$payload/licenses/$component/LICENSE"
+              (cd "$payload" && zip -qr "../../release/certael-${component}-${rid}-${GITHUB_REF_NAME}.zip" .)
+            done
+            node_payload="suite-staging/node-native-${rid}"
+            mkdir -p "$node_payload/sdk/node/native/$rid" "$node_payload/licenses/node-native"
+            cp "$source/lib/$node_library" "$node_payload/sdk/node/native/$rid/certael_node.node"
+            cp LICENSE "$node_payload/licenses/node-native/LICENSE"
+            (cd "$node_payload" && zip -qr "../../release/certael-node-native-${rid}-${GITHUB_REF_NAME}.zip" .)
+          }
+          package_native_component downloaded/certael-native-windows-x86_64 win-x64 certael_node.node
+          package_native_component downloaded/certael-native-linux-x86_64 linux-x64 certael_node.node
+          package_native_component downloaded/certael-native-macos-arm64 osx-arm64 certael_node.node
+          package_native_component downloaded/certael-native-macos-x86_64 osx-x64 certael_node.node
+
+          cp downloaded/certael-suite-managed/*.zip release/
+          cp downloaded/certael-wasm/*.zip release/
+          cp downloaded/setup-desktop/certael-setup-* release/
+          cp installer/trust/certael-release-keys.json release/certael-release-keys.json
+      - name: Archive release inputs
         run: |
           set -euo pipefail
           cargo install cargo-cyclonedx --version 0.5.9 --locked
@@ -366,7 +611,46 @@ jobs:
             name="$(basename "$directory")"
             tar -C "$directory" -czf "release/${name}-${GITHUB_REF_NAME}.tar.gz" .
           done
-          (cd release && sha256sum * > checksums-sha256.txt)
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
+        with: { dotnet-version: 10.0.x }
+      - name: Assemble and sign canonical suite manifest
+        env:
+          CERTAEL_SUITE_SIGNING_KEY_BASE64: ${{ secrets.CERTAEL_SUITE_SIGNING_KEY_BASE64 }}
+          CERTAEL_SUITE_SIGNING_KEY_ID: ${{ vars.CERTAEL_SUITE_SIGNING_KEY_ID }}
+        shell: pwsh
+        run: |
+          if (-not $env:CERTAEL_SUITE_SIGNING_KEY_BASE64) {
+            throw "CERTAEL_SUITE_SIGNING_KEY_BASE64 is not configured"
+          }
+          if (-not $env:CERTAEL_SUITE_SIGNING_KEY_ID) {
+            throw "CERTAEL_SUITE_SIGNING_KEY_ID is not configured"
+          }
+          $version = $env:GITHUB_REF_NAME.Substring(1)
+          $issuedAt = [DateTimeOffset]::UtcNow
+          $expiresAt = $issuedAt.AddDays(30)
+          $manifestPath = "release/certael-suite-$($env:GITHUB_REF_NAME).json"
+          $signedPath = "release/certael-suite-$($env:GITHUB_REF_NAME).signed.json"
+          $releaseBaseUri = "https://github.com/$($env:GITHUB_REPOSITORY)/releases/download/$($env:GITHUB_REF_NAME)/"
+          ./scripts/new-suite-definition.ps1 -Version $version `
+            -ReleaseRoot release -OutputPath release/suite-definition.json
+          dotnet run --project cli/Certael.Cli -c Release -- `
+            suite assemble $version $($issuedAt.ToString("O")) $($expiresAt.ToString("O")) `
+            $releaseBaseUri release/suite-definition.json $manifestPath
+          [IO.File]::WriteAllBytes("suite-signing.key", `
+            [Convert]::FromBase64String($env:CERTAEL_SUITE_SIGNING_KEY_BASE64))
+          try {
+            dotnet run --project cli/Certael.Cli -c Release --no-restore -- `
+              suite sign $manifestPath suite-signing.key `
+              $env:CERTAEL_SUITE_SIGNING_KEY_ID $signedPath
+          }
+          finally {
+            [IO.File]::WriteAllBytes("suite-signing.key", [byte[]]::new(32))
+            Remove-Item -LiteralPath suite-signing.key -Force
+          }
+          Remove-Item Env:CERTAEL_SUITE_SIGNING_KEY_BASE64
+          Remove-Item -LiteralPath release/suite-definition.json -Force
+      - name: Final release checksums
+        run: (cd release && sha256sum * > checksums-sha256.txt)
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
         with: { cosign-release: v3.0.6 }
       - name: Keyless-sign release files

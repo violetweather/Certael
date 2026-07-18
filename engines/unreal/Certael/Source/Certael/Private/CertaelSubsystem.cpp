@@ -2,6 +2,7 @@
 #include "CertaelAgentCodec.h"
 #include "certael.h"
 #include "certael_agent_probe.h"
+#include "Misc/ScopeLock.h"
 
 namespace {
 constexpr uint8 AgentHelloMessage = 1;
@@ -12,6 +13,21 @@ constexpr uint8 AgentHealthMessage = 5;
 constexpr uint8 ShutdownMessage = 6;
 constexpr uint8 RevocationMessage = 7;
 constexpr uint32 RequiredProbeAbiVersion = 1;
+
+FCertaelOperationResult SuccessResult() {
+    FCertaelOperationResult Result;
+    Result.bSucceeded = true;
+    Result.Error = ECertaelBlueprintError::None;
+    Result.PublicReason = TEXT("Completed.");
+    return Result;
+}
+
+FCertaelOperationResult FailureResult(ECertaelBlueprintError Error, const TCHAR* Reason) {
+    FCertaelOperationResult Result;
+    Result.Error = Error;
+    Result.PublicReason = Reason;
+    return Result;
+}
 
 bool ReadAgentMessage(void* Channel, uint8& Type, TArray<uint8>& Payload) {
     size_t Required = 0;
@@ -49,6 +65,7 @@ void UCertaelSubsystem::Deinitialize() {
 }
 
 bool UCertaelSubsystem::ConnectToInheritedAgent(FCertaelAgentHello& Hello) {
+    FScopeLock Lock(&AgentMutex);
     if (AgentChannel != nullptr || certael_probe_abi_version() != RequiredProbeAbiVersion)
         return false;
     certael_agent_channel* Channel = nullptr;
@@ -68,6 +85,7 @@ bool UCertaelSubsystem::ConnectToInheritedAgent(FCertaelAgentHello& Hello) {
 bool UCertaelSubsystem::BindAgentLaunchBundle(
     const TArray<uint8>& SignedPolicy, const TArray<uint8>& SignedGrant,
     const TArray<uint8>& SignedBuildManifest) {
+    FScopeLock Lock(&AgentMutex);
     if (AgentChannel == nullptr) return false;
     TArray<uint8> Bundle;
     if (!CertaelAgentCodec::EncodeLaunchBundle(SignedPolicy, SignedGrant,
@@ -84,6 +102,7 @@ bool UCertaelSubsystem::BindAgentLaunchBundle(
 
 bool UCertaelSubsystem::ExchangeAgentChallenge(
     const TArray<uint8>& CanonicalChallenge, TArray<uint8>& SignedReport) {
+    FScopeLock Lock(&AgentMutex);
     SignedReport.Reset();
     if (AgentChannel == nullptr || CanonicalChallenge.IsEmpty()
         || CanonicalChallenge.Num() > CertaelAgentCodec::MaximumMessageBytes) return false;
@@ -99,6 +118,7 @@ bool UCertaelSubsystem::ExchangeAgentChallenge(
 }
 
 bool UCertaelSubsystem::RevokeAgentSession(const TArray<uint8>& SignedRevocation) {
+    FScopeLock Lock(&AgentMutex);
     if (AgentChannel == nullptr || SignedRevocation.IsEmpty()
         || SignedRevocation.Num() > CertaelAgentCodec::MaximumMessageBytes) return false;
     if (certael_agent_channel_write(static_cast<certael_agent_channel*>(AgentChannel),
@@ -115,11 +135,17 @@ bool UCertaelSubsystem::RevokeAgentSession(const TArray<uint8>& SignedRevocation
 }
 
 void UCertaelSubsystem::ShutdownAgent() {
-    if (AgentChannel == nullptr) return;
-    certael_agent_channel_write(static_cast<certael_agent_channel*>(AgentChannel),
-        ShutdownMessage, nullptr, 0);
-    certael_agent_channel_destroy(static_cast<certael_agent_channel*>(AgentChannel));
-    AgentChannel = nullptr;
+    bool bWasConnected = false;
+    {
+        FScopeLock Lock(&AgentMutex);
+        if (AgentChannel == nullptr) return;
+        bWasConnected = true;
+        certael_agent_channel_write(static_cast<certael_agent_channel*>(AgentChannel),
+            ShutdownMessage, nullptr, 0);
+        certael_agent_channel_destroy(static_cast<certael_agent_channel*>(AgentChannel));
+        AgentChannel = nullptr;
+    }
+    if (bWasConnected) OnAgentConnectionChanged.Broadcast(false);
 }
 
 TArray<uint8> UCertaelSubsystem::CreateSessionPublicKey() const {
@@ -186,4 +212,163 @@ FCertaelAuthorizedAction UCertaelSubsystem::AuthorizeAction(
     if (Status != CERTAEL_OK) Result.Envelope.Reset();
     else Result.Envelope.SetNum(static_cast<int32>(Written), EAllowShrinking::No);
     return Result;
+}
+
+void UCertaelSubsystem::SetLastOperation(const FCertaelOperationResult& Result) {
+    FScopeLock Lock(&ResultMutex);
+    LastOperation = Result;
+}
+
+FCertaelOperationResult UCertaelSubsystem::GetLastOperationResult() const {
+    FScopeLock Lock(&ResultMutex);
+    return LastOperation;
+}
+
+bool UCertaelSubsystem::IsAgentConnected() const {
+    FScopeLock Lock(&AgentMutex);
+    return AgentChannel != nullptr;
+}
+
+bool UCertaelSubsystem::TryCreateSessionPublicKey(
+    TArray<uint8>& PublicKey, FCertaelOperationResult& Result) {
+    PublicKey = CreateSessionPublicKey();
+    Result = !PublicKey.IsEmpty() ? SuccessResult()
+        : FailureResult(Runtime == nullptr ? ECertaelBlueprintError::RuntimeUnavailable
+            : ECertaelBlueprintError::NativeRejected,
+            Runtime == nullptr ? TEXT("The Certael runtime is unavailable.")
+                : TEXT("The native runtime could not create a session key."));
+    SetLastOperation(Result);
+    return Result.bSucceeded;
+}
+
+bool UCertaelSubsystem::TrySignRedemption(const TArray<uint8>& TicketId,
+    const TArray<uint8>& Challenge, TArray<uint8>& Proof, FCertaelOperationResult& Result) {
+    const bool bValidInput = TicketId.Num() == 16 && Challenge.Num() >= 16 && Challenge.Num() <= 256;
+    Proof = SignRedemption(TicketId, Challenge);
+    Result = !Proof.IsEmpty() ? SuccessResult()
+        : FailureResult(Runtime == nullptr ? ECertaelBlueprintError::RuntimeUnavailable
+            : !bValidInput ? ECertaelBlueprintError::InvalidInput
+                : ECertaelBlueprintError::NativeRejected,
+            Runtime == nullptr ? TEXT("The Certael runtime is unavailable.")
+                : !bValidInput ? TEXT("Ticket and challenge sizes are invalid.")
+                    : TEXT("The native runtime rejected the redemption proof."));
+    SetLastOperation(Result);
+    return Result.bSucceeded;
+}
+
+bool UCertaelSubsystem::TryActivateSession(const FCertaelSessionBinding& Binding,
+    FCertaelOperationResult& Result) {
+    const bool bValidInput = Binding.InitialSequence >= 0 && Binding.BindingDigest.Num() == 32
+        && !Binding.SessionId.IsEmpty() && !Binding.GameId.IsEmpty()
+        && !Binding.EnvironmentId.IsEmpty() && !Binding.MatchId.IsEmpty()
+        && !Binding.BuildId.IsEmpty();
+    const bool bSucceeded = bValidInput && ActivateSession(Binding);
+    Result = bSucceeded ? SuccessResult()
+        : FailureResult(Runtime == nullptr ? ECertaelBlueprintError::RuntimeUnavailable
+            : !bValidInput ? ECertaelBlueprintError::InvalidInput
+                : ECertaelBlueprintError::NativeRejected,
+            Runtime == nullptr ? TEXT("The Certael runtime is unavailable.")
+                : !bValidInput ? TEXT("The server session binding is incomplete or malformed.")
+                    : TEXT("The native runtime rejected the server session binding."));
+    SetLastOperation(Result);
+    if (bSucceeded) OnSessionActivated.Broadcast(Binding);
+    return bSucceeded;
+}
+
+bool UCertaelSubsystem::TryAuthorizeAction(const FString& ActionType,
+    const FString& RequestSchema, int32 SchemaVersion, const TArray<uint8>& Payload,
+    FCertaelAuthorizedAction& Action, FCertaelOperationResult& Result) {
+    const bool bValidInput = !ActionType.IsEmpty() && !RequestSchema.IsEmpty()
+        && SchemaVersion > 0 && Payload.Num() <= 64 * 1024;
+    Action = AuthorizeAction(ActionType, RequestSchema, SchemaVersion, Payload);
+    Result = !Action.Envelope.IsEmpty() ? SuccessResult()
+        : FailureResult(Runtime == nullptr ? ECertaelBlueprintError::RuntimeUnavailable
+            : !bValidInput ? (Payload.Num() > 64 * 1024
+                ? ECertaelBlueprintError::MessageTooLarge : ECertaelBlueprintError::InvalidInput)
+                : ECertaelBlueprintError::NativeRejected,
+            Runtime == nullptr ? TEXT("The Certael runtime is unavailable.")
+                : Payload.Num() > 64 * 1024 ? TEXT("The action payload exceeds 64 KiB.")
+                    : !bValidInput ? TEXT("The action type, schema, or schema version is invalid.")
+                        : TEXT("The native runtime rejected the action request."));
+    SetLastOperation(Result);
+    if (Result.bSucceeded) OnActionAuthorized.Broadcast(Action);
+    return Result.bSucceeded;
+}
+
+bool UCertaelSubsystem::TryConnectToInheritedAgent(FCertaelAgentHello& Hello,
+    FCertaelOperationResult& Result) {
+    const bool bSucceeded = ConnectToInheritedAgent(Hello);
+    Result = bSucceeded ? SuccessResult()
+        : FailureResult(certael_probe_abi_version() != RequiredProbeAbiVersion
+            ? ECertaelBlueprintError::ProtocolMismatch : ECertaelBlueprintError::AgentUnavailable,
+            certael_probe_abi_version() != RequiredProbeAbiVersion
+                ? TEXT("The installed Agent probe ABI is incompatible.")
+                : TEXT("No valid inherited Certael Agent channel is available."));
+    SetLastOperation(Result);
+    if (bSucceeded) {
+        OnAgentConnected.Broadcast(Hello);
+        OnAgentConnectionChanged.Broadcast(true);
+    }
+    return bSucceeded;
+}
+
+bool UCertaelSubsystem::TryExchangeAgentChallenge(
+    const TArray<uint8>& CanonicalChallenge, TArray<uint8>& SignedReport,
+    FCertaelOperationResult& Result) {
+    const bool bConnected = IsAgentConnected();
+    const bool bValidInput = !CanonicalChallenge.IsEmpty()
+        && CanonicalChallenge.Num() <= CertaelAgentCodec::MaximumMessageBytes;
+    const bool bSucceeded = bConnected && bValidInput
+        && ExchangeAgentChallenge(CanonicalChallenge, SignedReport);
+    Result = bSucceeded ? SuccessResult()
+        : FailureResult(!bConnected ? ECertaelBlueprintError::AgentUnavailable
+            : !bValidInput ? (CanonicalChallenge.Num() > CertaelAgentCodec::MaximumMessageBytes
+                ? ECertaelBlueprintError::MessageTooLarge : ECertaelBlueprintError::InvalidInput)
+                : ECertaelBlueprintError::TransportFailure,
+            !bConnected ? TEXT("The Certael Agent channel is not connected.")
+                : CanonicalChallenge.IsEmpty() ? TEXT("The Agent challenge is empty.")
+                    : CanonicalChallenge.Num() > CertaelAgentCodec::MaximumMessageBytes
+                        ? TEXT("The Agent challenge exceeds the protocol limit.")
+                        : TEXT("The Agent challenge exchange failed or returned an unexpected message."));
+    SetLastOperation(Result);
+    return bSucceeded;
+}
+
+bool UCertaelSubsystem::TryBindAgentLaunchBundle(const TArray<uint8>& SignedPolicy,
+    const TArray<uint8>& SignedGrant, const TArray<uint8>& SignedBuildManifest,
+    FCertaelOperationResult& Result) {
+    const bool bConnected = IsAgentConnected();
+    const bool bValidInput = !SignedPolicy.IsEmpty() && !SignedGrant.IsEmpty()
+        && !SignedBuildManifest.IsEmpty()
+        && SignedPolicy.Num() <= CertaelAgentCodec::MaximumMessageBytes
+        && SignedGrant.Num() <= CertaelAgentCodec::MaximumMessageBytes
+        && SignedBuildManifest.Num() <= CertaelAgentCodec::MaximumMessageBytes;
+    const bool bSucceeded = bConnected && bValidInput
+        && BindAgentLaunchBundle(SignedPolicy, SignedGrant, SignedBuildManifest);
+    Result = bSucceeded ? SuccessResult()
+        : FailureResult(!bConnected ? ECertaelBlueprintError::AgentUnavailable
+            : !bValidInput ? ECertaelBlueprintError::InvalidInput
+                : ECertaelBlueprintError::TransportFailure,
+            !bConnected ? TEXT("The Certael Agent channel is not connected.")
+                : !bValidInput ? TEXT("The signed Agent launch bundle is empty or too large.")
+                    : TEXT("The Agent rejected the signed launch bundle."));
+    SetLastOperation(Result);
+    return bSucceeded;
+}
+
+bool UCertaelSubsystem::TryRevokeAgentSession(const TArray<uint8>& SignedRevocation,
+    FCertaelOperationResult& Result) {
+    const bool bConnected = IsAgentConnected();
+    const bool bValidInput = !SignedRevocation.IsEmpty()
+        && SignedRevocation.Num() <= CertaelAgentCodec::MaximumMessageBytes;
+    const bool bSucceeded = bConnected && bValidInput && RevokeAgentSession(SignedRevocation);
+    Result = bSucceeded ? SuccessResult()
+        : FailureResult(!bConnected ? ECertaelBlueprintError::AgentUnavailable
+            : !bValidInput ? ECertaelBlueprintError::InvalidInput
+                : ECertaelBlueprintError::TransportFailure,
+            !bConnected ? TEXT("The Certael Agent channel is not connected.")
+                : !bValidInput ? TEXT("The signed Agent revocation is empty or too large.")
+                    : TEXT("The Agent did not confirm session revocation."));
+    SetLastOperation(Result);
+    return bSucceeded;
 }

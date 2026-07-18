@@ -24,14 +24,16 @@ cargo test --workspace
 
 ```bash
 export CERTAEL_DEV_POSTGRES_PASSWORD="$(openssl rand -hex 24)"
+export CERTAEL_DEV_POSTGRES_CONNECTION_STRING="$(printf 'Host=postgres;Port=5432;Database=certael;Username=certael;%s=%s' 'Password' "$CERTAEL_DEV_POSTGRES_PASSWORD")"
 docker compose -f deploy/compose/docker-compose.yml up -d
 curl --fail http://localhost:8080/healthz
 ```
 
-The profile starts PostgreSQL, Redis, NATS, ClickHouse, and the API. PostgreSQL
-stores sessions and atomic results; Redis enforces one-time ticket redemption and
-action sequencing. NATS and ClickHouse are present for the wider event/evidence
-architecture but are not fully wired by the current API.
+The profile starts PostgreSQL, Redis, NATS JetStream, ClickHouse, the API, the
+transactional event worker, and the analytics projection worker. PostgreSQL
+stores authoritative sessions, mutations, outbox records, evidence, and cases;
+Redis enforces real-time admission; JetStream carries durable canonical events;
+and ClickHouse is a rebuildable analytical projection.
 
 The local API is HTTP and uses development credentials. Keep it on loopback or an
 isolated development network.

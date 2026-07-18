@@ -1,0 +1,11 @@
+{
+  "keys": [
+    {
+      "key_id": "certael-suite-2026-01",
+      "public_key_hex": "bba02dd33695fcd9b5d525ceb8897fcf056e9b3e273c98f2b0f6f5b7f4380931",
+      "not_before_unix": 1784348307,
+      "not_after_unix": 1847318399,
+      "revoked": false
+    }
+  ]
+}

@@ -5,11 +5,14 @@ members = [
   "runtime/certael-c-api",
   "runtime/certael-node",
   "runtime/certael-wasm",
+  "runtime/certael-wasm-guest",
+  "samples/wasm-rules/repeated-reward",
+  "tools/certael-wasm-check",
   "tools/certael-load"
 ]
 
 [workspace.package]
-version = "0.4.0-alpha.1"
+version = "0.4.0-alpha.2"
 edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/violetweather/Certael"

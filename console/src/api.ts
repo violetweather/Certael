@@ -30,6 +30,68 @@ export interface CaseSummary {
   createdAt: string
   updatedAt: string
   resolvedAt: string | null
+  category: string
+  metadata: CaseMetadataValue[] | null
+  highestRisk: number
+  highestConfidence: number
+  ruleIds: string[] | null
+  signalFamilies: string[] | null
+}
+
+export type CaseMetadataType = 'Text' | 'Number' | 'Boolean' | 'DateTime' | 'Enumeration' | 'Identifier'
+export interface CaseMetadataValue {
+  key: string
+  type: CaseMetadataType
+  value: string
+  sensitive: boolean
+  searchable: boolean
+}
+
+export interface CaseQueuePage {
+  items: CaseSummary[]
+  nextCursor: string | null
+  hasMore: boolean
+}
+
+export interface CaseQueueFilters {
+  state?: string
+  search?: string
+  category?: string
+  ruleId?: string
+  signalFamily?: string
+  sortBy?: 'UpdatedAt' | 'CreatedAt' | 'Risk' | 'Confidence' | 'Rule' | 'Signal'
+  sortDirection?: 'Ascending' | 'Descending'
+  cursor?: string
+  pageSize?: number
+}
+
+export interface CaseCategoryDefinition {
+  key: string
+  displayName: string
+  description: string
+  enabled: boolean
+  sortOrder: number
+  version: number
+  updatedAt: string
+}
+
+export interface CaseMetadataDefinition {
+  key: string
+  label: string
+  type: CaseMetadataType
+  enumerationValues: string[]
+  sensitive: boolean
+  searchable: boolean
+  required: boolean
+  enabled: boolean
+  version: number
+  updatedAt: string
+}
+
+export interface CaseSettingsSnapshot {
+  scope: { tenantId: string; gameId: string; environmentId: string }
+  categories: CaseCategoryDefinition[]
+  metadataDefinitions: CaseMetadataDefinition[]
 }
 
 export interface CaseEvidence {
@@ -110,15 +172,21 @@ async function csrf(): Promise<string> {
 
 export const api = {
   session: () => request<OperatorSession>('/bff/session'),
-  cases: (session: OperatorSession, filters: { state?: string; search?: string }) => {
+  casePage: (session: OperatorSession, filters: CaseQueueFilters) => {
     const query = new URLSearchParams({
       tenantId: session.tenantId,
       environmentId: session.environmentId,
-      maximum: '250',
+      pageSize: String(filters.pageSize ?? 25),
     })
     if (filters.state) query.set('state', filters.state)
     if (filters.search) query.set('search', filters.search)
-    return request<CaseSummary[]>(`/bff/api/cases?${query}`)
+    if (filters.category) query.set('category', filters.category)
+    if (filters.ruleId) query.set('ruleId', filters.ruleId)
+    if (filters.signalFamily) query.set('signalFamily', filters.signalFamily)
+    if (filters.sortBy) query.set('sortBy', filters.sortBy)
+    if (filters.sortDirection) query.set('sortDirection', filters.sortDirection)
+    if (filters.cursor) query.set('cursor', filters.cursor)
+    return request<CaseQueuePage>(`/bff/api/cases/page?${query}`)
   },
   case: (session: OperatorSession, caseId: string) => {
     const query = new URLSearchParams({ tenantId: session.tenantId, environmentId: session.environmentId })
@@ -132,4 +200,26 @@ export const api = {
       body: JSON.stringify(body),
     },
   ),
+  updateMetadata: async (caseId: string, body: object) => request<CaseSummary>(
+    `/bff/api/cases/${caseId}/metadata`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'X-Certael-CSRF': await csrf() },
+      body: JSON.stringify(body),
+    }),
+  caseSettings: (session: OperatorSession, gameId: string) => {
+    const query = new URLSearchParams({ tenantId: session.tenantId, gameId, environmentId: session.environmentId })
+    return request<CaseSettingsSnapshot>(`/bff/api/case-settings?${query}`)
+  },
+  upsertCategory: async (key: string, body: object) => request<CaseCategoryDefinition>(
+    `/bff/api/case-settings/categories/${encodeURIComponent(key)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'X-Certael-CSRF': await csrf() },
+      body: JSON.stringify(body),
+    }),
+  upsertMetadataDefinition: async (key: string, body: object) => request<CaseMetadataDefinition>(
+    `/bff/api/case-settings/metadata/${encodeURIComponent(key)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'X-Certael-CSRF': await csrf() },
+      body: JSON.stringify(body),
+    }),
 }
