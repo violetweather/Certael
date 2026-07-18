@@ -87,7 +87,7 @@ public static class CertaelConsoleBootstrap
     public static string CertificateThumbprintSha256(string path)
     {
         using X509Certificate2 certificate = X509CertificateLoader.LoadPkcs12FromFile(
-            Path.GetFullPath(path), null, X509KeyStorageFlags.EphemeralKeySet);
+            Path.GetFullPath(path), null, X509KeyStorageFlags.DefaultKeySet);
         return Convert.ToBase64String(SHA256.HashData(certificate.RawData))
             .TrimEnd('=').Replace('+', '-').Replace('/', '_');
     }

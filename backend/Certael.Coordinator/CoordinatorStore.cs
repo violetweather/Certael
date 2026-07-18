@@ -301,8 +301,14 @@ public sealed class CoordinatorStore(NpgsqlDataSource dataSource)
         NpgsqlTransaction transaction, CancellationToken cancellationToken)
     {
         await using var command = new NpgsqlCommand("SELECT clock_timestamp()", connection, transaction);
-        return (DateTimeOffset)(await command.ExecuteScalarAsync(cancellationToken)
-            ?? throw new InvalidOperationException("Control database time is unavailable."));
+        object value = await command.ExecuteScalarAsync(cancellationToken)
+            ?? throw new InvalidOperationException("Control database time is unavailable.");
+        return value switch
+        {
+            DateTimeOffset timestamp => timestamp,
+            DateTime timestamp => new DateTimeOffset(DateTime.SpecifyKind(timestamp, DateTimeKind.Utc)),
+            _ => throw new InvalidOperationException("Control database returned an invalid timestamp.")
+        };
     }
     private static async ValueTask Audit(NpgsqlConnection connection,
         NpgsqlTransaction transaction, string tenant, string game, string environment,
