@@ -1,0 +1,12 @@
+{
+  "name": "@certael/server-win32-x64",
+  "version": "0.4.0-alpha.2",
+  "description": "Certael native verifier for Windows x64",
+  "license": "Apache-2.0",
+  "os": ["win32"],
+  "cpu": ["x64"],
+  "engines": { "node": ">=22" },
+  "main": "certael_node.node",
+  "files": ["certael_node.node", "README.md", "LICENSE"],
+  "publishConfig": { "access": "public", "provenance": true }
+}

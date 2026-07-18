@@ -217,9 +217,24 @@ FCertaelAuthorizedAction Action =
 GameNetwork->SendAuthoritativeAction(Action.Envelope);
 ```
 
-The subsystem is also Blueprint-callable. Build payload bytes from typed C++ or
-generated schema structures; session activation is typed and Blueprint users do
-not hand-author security-critical JSON.
+### Use from Blueprints
+
+Use **Get Certael Subsystem** and use the `Try` nodes for the
+same lifecycle. They expose separate success/failure execution pins and return
+an `FCertaelOperationResult` containing a stable `ECertaelBlueprintError` plus a
+safe public reason. Bind to the subsystem's session, action, and Agent delegates
+when an event-driven graph is clearer than a direct chain.
+
+For Agent evidence collection, use **Exchange Certael Agent Challenge (Async)**.
+It performs the blocking native exchange on a worker thread and returns to the
+game thread through typed success/failure pins. The blocking C++ method is
+deliberately not Blueprint-callable, so a graph cannot accidentally freeze the
+game thread while Agent evidence is collected.
+
+Build payload bytes from typed C++ or generated schema structures; session
+activation is typed and Blueprint users do not hand-author security-critical
+JSON. A successful action node means only that an envelope was created. The
+authoritative game server still decides and commits the gameplay result.
 
 ## Platform and release checklist
 

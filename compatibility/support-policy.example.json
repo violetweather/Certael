@@ -4,14 +4,14 @@
   "issued_at": "2026-07-16T00:00:00Z",
   "expires_at": "2026-08-15T00:00:00Z",
   "products": [
-    { "product": "Core", "minimum_supported_version": "0.3.0-alpha.2", "recommended_version": "0.4.0-alpha.1", "minimum_protocol_version": 1, "maximum_protocol_version": 1 },
-    { "product": "Agent", "minimum_supported_version": "0.3.0-alpha.2", "recommended_version": "0.3.0-alpha.3", "minimum_protocol_version": 1, "maximum_protocol_version": 1 },
-    { "product": "GodotAdapter", "minimum_supported_version": "0.3.0-alpha.2", "recommended_version": "0.4.0-alpha.1", "minimum_protocol_version": 1, "maximum_protocol_version": 1 },
-    { "product": "UnityAdapter", "minimum_supported_version": "0.3.0-alpha.2", "recommended_version": "0.4.0-alpha.1", "minimum_protocol_version": 1, "maximum_protocol_version": 1 },
-    { "product": "UnrealAdapter", "minimum_supported_version": "0.3.0-alpha.2", "recommended_version": "0.4.0-alpha.1", "minimum_protocol_version": 1, "maximum_protocol_version": 1 },
-    { "product": "DotNetServerSdk", "minimum_supported_version": "0.3.0-alpha.1", "recommended_version": "0.4.0-alpha.1", "minimum_protocol_version": 1, "maximum_protocol_version": 1 },
-    { "product": "NativeServerSdk", "minimum_supported_version": "0.3.0-alpha.1", "recommended_version": "0.4.0-alpha.1", "minimum_protocol_version": 1, "maximum_protocol_version": 1 },
-    { "product": "TypeScriptServerSdk", "minimum_supported_version": "0.4.0-alpha.1", "recommended_version": "0.4.0-alpha.1", "minimum_protocol_version": 1, "maximum_protocol_version": 1 }
+    { "product": "Core", "minimum_supported_version": "0.3.0-alpha.2", "recommended_version": "0.4.0-alpha.2", "minimum_protocol_version": 1, "maximum_protocol_version": 1 },
+    { "product": "Agent", "minimum_supported_version": "0.3.0-alpha.2", "recommended_version": "0.4.0-alpha.1", "minimum_protocol_version": 1, "maximum_protocol_version": 1 },
+    { "product": "GodotAdapter", "minimum_supported_version": "0.3.0-alpha.2", "recommended_version": "0.4.0-alpha.2", "minimum_protocol_version": 1, "maximum_protocol_version": 1 },
+    { "product": "UnityAdapter", "minimum_supported_version": "0.3.0-alpha.2", "recommended_version": "0.4.0-alpha.2", "minimum_protocol_version": 1, "maximum_protocol_version": 1 },
+    { "product": "UnrealAdapter", "minimum_supported_version": "0.3.0-alpha.2", "recommended_version": "0.4.0-alpha.2", "minimum_protocol_version": 1, "maximum_protocol_version": 1 },
+    { "product": "DotNetServerSdk", "minimum_supported_version": "0.3.0-alpha.1", "recommended_version": "0.4.0-alpha.2", "minimum_protocol_version": 1, "maximum_protocol_version": 1 },
+    { "product": "NativeServerSdk", "minimum_supported_version": "0.3.0-alpha.1", "recommended_version": "0.4.0-alpha.2", "minimum_protocol_version": 1, "maximum_protocol_version": 1 },
+    { "product": "TypeScriptServerSdk", "minimum_supported_version": "0.4.0-alpha.1", "recommended_version": "0.4.0-alpha.2", "minimum_protocol_version": 1, "maximum_protocol_version": 1 }
   ],
   "revocations": []
 }

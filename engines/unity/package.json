@@ -1,6 +1,6 @@
 {
   "name": "dev.certael.sdk",
-  "version": "0.4.0-alpha.1",
+  "version": "0.4.0-alpha.2",
   "displayName": "Certael SDK",
   "description": "Client integration for authoritative Certael-protected games.",
   "unity": "6000.3",

@@ -13,6 +13,9 @@ coverage/
 artifacts/
 **/node_modules/
 **/dist/
+server-sdk/typescript/native/*/*.node
+server-sdk/typescript/LICENSE
+server-sdk/typescript/native/*/LICENSE
 *.log
 *.tsbuildinfo
 engines/godot/godot-cpp/

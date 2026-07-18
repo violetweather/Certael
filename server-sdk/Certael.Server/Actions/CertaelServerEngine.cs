@@ -1,4 +1,5 @@
 using Certael.Server.Protections;
+using Certael.Server.Sessions;
 
 namespace Certael.Server.Actions;
 
@@ -10,7 +11,8 @@ public sealed class CertaelServerEngine(
     ActionAuthorizer authorizer,
     IActionResultStore results,
     TimeProvider timeProvider,
-    ProtectionProfileVerifier profileVerifier)
+    ProtectionProfileVerifier profileVerifier,
+    IRegionalActionFence? regionalFence = null)
 {
     public async ValueTask<ActionResult<TResponse>> ValidateAndExecuteAsync<
         TRequest, TResponse, TState>(
@@ -29,6 +31,23 @@ public sealed class CertaelServerEngine(
         ArgumentNullException.ThrowIfNull(decodeRequest);
         ArgumentNullException.ThrowIfNull(transactionFactory);
         ArgumentNullException.ThrowIfNull(validateAndApply);
+        if (regionalFence is not null)
+        {
+            if (string.IsNullOrWhiteSpace(binding.Region) || binding.RegionFencingEpoch < 1)
+                return ActionResult<TResponse>.Reject(Guid.Empty, "REGIONAL_LEASE_REQUIRED");
+            try
+            {
+                if (!await regionalFence.IsCurrentOwnerAsync(new RegionalFenceRequest(
+                        binding.TenantId, binding.GameId, binding.EnvironmentId, binding.MatchId,
+                        binding.Region, binding.ServerId, binding.RegionFencingEpoch),
+                        cancellationToken))
+                    return ActionResult<TResponse>.Reject(Guid.Empty, "STALE_FENCING_EPOCH");
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            { throw; }
+            catch (RegionalContinuityException)
+            { return ActionResult<TResponse>.Indeterminate(Guid.Empty); }
+        }
         TimeSpan timeout = callbackTimeout ?? TimeSpan.FromSeconds(1);
         if (timeout <= TimeSpan.Zero || timeout > TimeSpan.FromSeconds(30))
             throw new ArgumentOutOfRangeException(nameof(callbackTimeout));

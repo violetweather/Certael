@@ -18,22 +18,93 @@ public sealed class PostgresCaseStore(
         CaseQueueQuery query, CancellationToken cancellationToken)
     {
         if (query.Maximum is < 1 or > 1000) throw new ArgumentOutOfRangeException(nameof(query));
+        var results = new List<CaseSummary>(query.Maximum);
+        string? cursor = null;
+        do
+        {
+            int remaining = query.Maximum - results.Count;
+            CaseQueuePage page = await SearchPageAsync(query with
+            {
+                Cursor = cursor,
+                PageSize = Math.Min(remaining, 250)
+            }, cancellationToken);
+            results.AddRange(page.Items);
+            cursor = page.HasMore ? page.NextCursor : null;
+        } while (cursor is not null && results.Count < query.Maximum);
+        return results;
+    }
+
+    public async ValueTask<CaseQueuePage> SearchPageAsync(
+        CaseQueueQuery query, CancellationToken cancellationToken)
+    {
+        if (query.PageSize is < 1 or > 250) throw new ArgumentOutOfRangeException(nameof(query));
+        CaseQueueCursor? cursor = query.Cursor is null ? null : CaseQueueCursorCodec.Decode(query.Cursor);
         await using NpgsqlConnection connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using NpgsqlTransaction transaction = await connection.BeginTransactionAsync(cancellationToken);
         await SetTenantAsync(connection, transaction, query.TenantId, cancellationToken);
-        const string sql = """
-            SELECT case_id, tenant_id, game_id, environment_id, player_subject,
+        string sortExpression = query.SortBy switch
+        {
+            CaseSortField.CreatedAt => "to_char(c.created_at AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US')",
+            CaseSortField.Risk => "lpad(COALESCE(e.max_risk,0)::text,10,'0')",
+            CaseSortField.Confidence => "to_char(COALESCE(e.max_confidence,0),'FM0.000000000')",
+            CaseSortField.Rule => "COALESCE(e.first_rule,'')",
+            CaseSortField.Signal => "COALESCE(e.first_signal,'')",
+            _ => "to_char(c.updated_at AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US')"
+        };
+        string comparison = query.SortDirection == CaseSortDirection.Descending ? "<" : ">";
+        string direction = query.SortDirection == CaseSortDirection.Descending ? "DESC" : "ASC";
+        string sql = $"""
+            WITH candidates AS (
+              SELECT c.case_id, c.tenant_id, c.game_id, c.environment_id, c.player_subject,
                    title, summary, state, signed_policy_id, signed_policy_version,
-                   assigned_to, version, created_at, updated_at, resolved_at
-            FROM certael_cases
-            WHERE tenant_id = $1 AND environment_id = $2 AND expires_at > now()
+                   assigned_to, version, created_at, updated_at, resolved_at,
+                   c.category, c.metadata::text,
+                   COALESCE(e.max_risk,0), COALESCE(e.max_confidence,0),
+                   COALESCE(e.rule_ids, ARRAY[]::text[]),
+                   COALESCE(e.signal_families, ARRAY[]::text[]),
+                   {sortExpression} AS sort_key
+              FROM certael_cases c
+              LEFT JOIN LATERAL (
+                SELECT max(f.risk_contribution) AS max_risk,
+                       max(f.confidence) AS max_confidence,
+                       min(f.rule_id) AS first_rule,
+                       min(f.signal_family) AS first_signal,
+                       array_agg(DISTINCT f.rule_id ORDER BY f.rule_id) AS rule_ids,
+                       array_agg(DISTINCT f.signal_family ORDER BY f.signal_family) AS signal_families
+                FROM certael_case_evidence ce
+                JOIN certael_findings f ON f.tenant_id=ce.tenant_id AND f.finding_id=ce.finding_id
+                WHERE ce.tenant_id=c.tenant_id AND ce.case_id=c.case_id
+              ) e ON true
+            WHERE c.tenant_id = $1 AND c.environment_id = $2 AND c.expires_at > now()
               AND (($3::text IS NULL AND state IN ('Open', 'InReview')) OR state = $3)
               AND ($4::text IS NULL OR assigned_to = $4)
               AND ($5::text IS NULL OR player_subject = $5)
               AND ($6::text IS NULL OR title ILIKE '%' || $6 || '%'
-                   OR summary ILIKE '%' || $6 || '%' OR player_subject ILIKE '%' || $6 || '%')
-            ORDER BY updated_at DESC, case_id
-            LIMIT $7
+                   OR summary ILIKE '%' || $6 || '%' OR player_subject ILIKE '%' || $6 || '%'
+                   OR category ILIKE '%' || $6 || '%'
+                   OR EXISTS (SELECT 1 FROM jsonb_array_elements(c.metadata) item
+                     WHERE COALESCE(item->>'sensitive','false') <> 'true'
+                       AND COALESCE(item->>'searchable','false') = 'true'
+                       AND ((item->>'key') ILIKE '%' || $6 || '%'
+                         OR (item->>'value') ILIKE '%' || $6 || '%'))
+                   OR EXISTS (SELECT 1 FROM certael_case_evidence ce
+                     JOIN certael_findings f ON f.tenant_id=ce.tenant_id AND f.finding_id=ce.finding_id
+                     WHERE ce.tenant_id=c.tenant_id AND ce.case_id=c.case_id
+                       AND (f.rule_id ILIKE '%' || $6 || '%' OR f.rule_version ILIKE '%' || $6 || '%'
+                         OR f.signal_family ILIKE '%' || $6 || '%')))
+              AND ($7::text IS NULL OR category = $7)
+              AND ($8::text IS NULL OR EXISTS (SELECT 1 FROM certael_case_evidence ce
+                    JOIN certael_findings f ON f.tenant_id=ce.tenant_id AND f.finding_id=ce.finding_id
+                    WHERE ce.tenant_id=c.tenant_id AND ce.case_id=c.case_id AND f.rule_id ILIKE '%' || $8 || '%'))
+              AND ($9::text IS NULL OR EXISTS (SELECT 1 FROM certael_case_evidence ce
+                    JOIN certael_findings f ON f.tenant_id=ce.tenant_id AND f.finding_id=ce.finding_id
+                    WHERE ce.tenant_id=c.tenant_id AND ce.case_id=c.case_id AND f.signal_family = $9))
+            )
+            SELECT * FROM candidates
+            WHERE ($10::text IS NULL OR sort_key {comparison} $10
+                OR (sort_key = $10 AND case_id {comparison} $11))
+            ORDER BY sort_key {direction}, case_id {direction}
+            LIMIT $12
             """;
         await using var command = new NpgsqlCommand(sql, connection, transaction);
         command.Parameters.AddWithValue(query.TenantId);
@@ -42,13 +113,34 @@ public sealed class PostgresCaseStore(
         AddNullableText(command, query.AssignedTo);
         AddNullableText(command, query.PlayerSubject);
         AddNullableText(command, string.IsNullOrWhiteSpace(query.Search) ? null : query.Search.Trim());
-        command.Parameters.AddWithValue(query.Maximum);
-        var results = new List<CaseSummary>();
+        AddNullableText(command, query.Category);
+        AddNullableText(command, query.RuleId);
+        AddNullableText(command, query.SignalFamily?.ToString());
+        AddNullableText(command, cursor?.SortValue);
+        command.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Uuid,
+            Value = cursor is null ? DBNull.Value : cursor.CaseId });
+        command.Parameters.AddWithValue(query.PageSize + 1);
+        var results = new List<(CaseSummary Summary, string SortKey)>();
         await using NpgsqlDataReader reader = await command.ExecuteReaderAsync(cancellationToken);
-        while (await reader.ReadAsync(cancellationToken)) results.Add(ReadSummary(reader));
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            CaseSummary summary = ReadSummary(reader) with
+            {
+                HighestRisk = reader.GetInt32(17),
+                HighestConfidence = reader.GetDouble(18),
+                RuleIds = reader.GetFieldValue<string[]>(19),
+                SignalFamilies = reader.GetFieldValue<string[]>(20)
+                    .Select(Enum.Parse<SignalFamily>).ToArray()
+            };
+            results.Add((summary, reader.GetString(21)));
+        }
         await reader.DisposeAsync();
         await transaction.CommitAsync(cancellationToken);
-        return results;
+        bool hasMore = results.Count > query.PageSize;
+        (CaseSummary Summary, string SortKey)[] returned = results.Take(query.PageSize).ToArray();
+        string? next = hasMore && returned.Length > 0 ? CaseQueueCursorCodec.Encode(
+            new CaseQueueCursor(returned[^1].SortKey, returned[^1].Summary.CaseId)) : null;
+        return new CaseQueuePage(returned.Select(value => value.Summary).ToArray(), next, hasMore);
     }
 
     public async ValueTask<CaseDetail?> FindAsync(
@@ -85,6 +177,28 @@ public sealed class PostgresCaseStore(
         await using NpgsqlConnection connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using NpgsqlTransaction transaction = await connection.BeginTransactionAsync(cancellationToken);
         await SetTenantAsync(connection, transaction, bundle.Verdict.TenantId, cancellationToken);
+        await using (var replay = new NpgsqlCommand("""
+            SELECT c.case_id
+            FROM certael_cases c
+            JOIN certael_case_evidence ce
+              ON ce.tenant_id=c.tenant_id AND ce.case_id=c.case_id
+            WHERE c.tenant_id=$1 AND ce.verdict_id=$2
+              AND c.state IN ('Open','InReview') AND c.expires_at>now()
+            ORDER BY c.updated_at DESC LIMIT 1
+            FOR UPDATE OF c
+            """, connection, transaction))
+        {
+            replay.Parameters.AddWithValue(bundle.Verdict.TenantId);
+            replay.Parameters.AddWithValue(bundle.Verdict.VerdictId);
+            object? alreadyAttached = await replay.ExecuteScalarAsync(cancellationToken);
+            if (alreadyAttached is Guid existingCaseId)
+            {
+                CaseSummary? existingSummary = await FindSummaryAsync(connection, transaction,
+                    bundle.Verdict.TenantId, existingCaseId, cancellationToken);
+                await transaction.CommitAsync(cancellationToken);
+                return existingSummary;
+            }
+        }
         Guid caseId;
         bool created;
         const string existingSql = """
@@ -294,6 +408,25 @@ public sealed class PostgresCaseStore(
             approvedBy, "Approved", null, now, null);
     }
 
+    public async ValueTask<CaseSummary?> UpdateMetadataAsync(string tenantId, Guid caseId,
+        string category, IReadOnlyList<CaseMetadataValue> metadata, string actorSubject,
+        string reason, long expectedVersion, CancellationToken cancellationToken)
+    {
+        ValidateMutation(actorSubject, reason, expectedVersion, 2048);
+        ValidateClassification(category, metadata);
+        string serialized = JsonSerializer.Serialize(metadata, Json);
+        return await MutateCaseAsync(tenantId, caseId, expectedVersion, actorSubject,
+            "MetadataChanged", reason, new
+            {
+                category,
+                keys = metadata.Select(value => value.Key).Order(StringComparer.Ordinal).ToArray()
+            }, (_, _) => Task.CompletedTask, "category=$4, metadata=$5", command =>
+            {
+                command.Parameters.AddWithValue(category);
+                command.Parameters.AddWithValue(NpgsqlDbType.Jsonb, serialized);
+            }, cancellationToken);
+    }
+
     private async Task<CaseSummary?> MutateCaseAsync(string tenantId, Guid caseId,
         long expectedVersion, string actorSubject, string activityType, string reason,
         object details, Func<NpgsqlConnection, NpgsqlTransaction, Task> appendRecord,
@@ -376,7 +509,8 @@ public sealed class PostgresCaseStore(
         string sql = """
             SELECT case_id, tenant_id, game_id, environment_id, player_subject,
                    title, summary, state, signed_policy_id, signed_policy_version,
-                   assigned_to, version, created_at, updated_at, resolved_at
+                   assigned_to, version, created_at, updated_at, resolved_at,
+                   category, metadata::text
             FROM certael_cases WHERE tenant_id=$1 AND case_id=$2 AND expires_at > now()
             """ + (forUpdate ? " FOR UPDATE" : string.Empty);
         await using var command = new NpgsqlCommand(sql, connection, transaction);
@@ -391,7 +525,9 @@ public sealed class PostgresCaseStore(
         Enum.Parse<CaseState>(reader.GetString(7)), reader.GetString(8), reader.GetString(9),
         reader.IsDBNull(10) ? null : reader.GetString(10), reader.GetInt64(11),
         reader.GetFieldValue<DateTimeOffset>(12), reader.GetFieldValue<DateTimeOffset>(13),
-        reader.IsDBNull(14) ? null : reader.GetFieldValue<DateTimeOffset>(14));
+        reader.IsDBNull(14) ? null : reader.GetFieldValue<DateTimeOffset>(14),
+        reader.GetString(15), JsonSerializer.Deserialize<List<CaseMetadataValue>>(
+            reader.GetString(16), Json) ?? []);
 
     private static async Task<IReadOnlyList<CaseEvidence>> ReadEvidenceAsync(
         NpgsqlConnection connection, NpgsqlTransaction transaction, string tenantId,
@@ -505,6 +641,42 @@ public sealed class PostgresCaseStore(
         if (string.IsNullOrWhiteSpace(actorSubject) || string.IsNullOrWhiteSpace(reason)
             || reason.Length > maximumReason || expectedVersion < 1 || reason.Any(char.IsControl))
             throw new ArgumentException("Case mutation input is invalid.");
+    }
+
+    private static void ValidateClassification(string category,
+        IReadOnlyList<CaseMetadataValue> metadata)
+    {
+        if (string.IsNullOrWhiteSpace(category) || category.Length > 96 || category.Any(char.IsControl)
+            || metadata.Count > 64 || metadata.Select(value => value.Key)
+                .Distinct(StringComparer.Ordinal).Count() != metadata.Count)
+            throw new ArgumentException("Case classification is invalid.");
+        foreach (CaseMetadataValue value in metadata)
+        {
+            if (string.IsNullOrWhiteSpace(value.Key) || value.Key.Length > 96
+                || value.Key.Any(character => !(char.IsAsciiLetterOrDigit(character)
+                    || character is '.' or '_' or '-')) || value.Value.Length > 4096
+                || value.Value.Any(char.IsControl) || !Enum.IsDefined(value.Type))
+                throw new ArgumentException("Case metadata is invalid.");
+            ValidateMetadataValue(value);
+        }
+        if (JsonSerializer.SerializeToUtf8Bytes(metadata, Json).Length > 64 * 1024)
+            throw new ArgumentException("Case metadata is too large.");
+    }
+
+    private static void ValidateMetadataValue(CaseMetadataValue value)
+    {
+        bool valid = value.Type switch
+        {
+            CaseMetadataType.Number => decimal.TryParse(value.Value,
+                System.Globalization.NumberStyles.Number,
+                System.Globalization.CultureInfo.InvariantCulture, out _),
+            CaseMetadataType.Boolean => bool.TryParse(value.Value, out _),
+            CaseMetadataType.DateTime => DateTimeOffset.TryParse(value.Value,
+                System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.RoundtripKind, out _),
+            _ => true
+        };
+        if (!valid) throw new ArgumentException($"Case metadata value {value.Key} is invalid.");
     }
 
     private static bool ValidTransition(CaseState current, CaseState target) =>

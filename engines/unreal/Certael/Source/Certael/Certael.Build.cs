@@ -13,7 +13,10 @@ public class Certael : ModuleRules
         {
             PublicAdditionalLibraries.Add(Path.Combine(Native, "Win64", "certael_c_api.lib"));
             PublicAdditionalLibraries.Add(Path.Combine(Native, "Win64", "certael_agent_probe.lib"));
+            PublicDelayLoadDLLs.Add("certael_c_api.dll");
+            PublicDelayLoadDLLs.Add("certael_agent_probe.dll");
             RuntimeDependencies.Add("$(PluginDir)/Binaries/Win64/certael_c_api.dll");
+            RuntimeDependencies.Add("$(PluginDir)/Binaries/Win64/certael_agent_probe.dll");
         }
         else if (Target.Platform == UnrealTargetPlatform.Linux)
         {

@@ -8,7 +8,21 @@ public sealed record AnalyticsWorkerOptions
     public int AcknowledgementWaitSeconds { get; init; } = 30;
     public int RetryDelaySeconds { get; init; } = 5;
     public int RawEventRetentionDays { get; init; } = 30;
+    public int DerivedAnalyticsRetentionDays { get; init; } = 90;
     public int CatalogRefreshSeconds { get; init; } = 30;
+    public int MaximumEconomyEventsPerWindow { get; init; } = 50_000;
+    public EconomyProfileVerificationKeyOptions[] EconomyProfileKeys { get; init; } = [];
+    public int MaximumRelationshipEventsPerWindow { get; init; } = 50_000;
+    public int MaximumRelationshipFindingsPerEvent { get; init; } = 250;
+    public EconomyProfileVerificationKeyOptions[] RelationshipProfileKeys { get; init; } = [];
+    public int RedisEconomyRetentionDays { get; init; } = 90;
+    public int RedisEconomyMaximumEntriesPerSubject { get; init; } = 100_000;
+}
+
+public sealed record EconomyProfileVerificationKeyOptions
+{
+    public string KeyId { get; init; } = "";
+    public string PublicKeySpkiBase64 { get; init; } = "";
 }
 
 public sealed record ClickHouseOptions

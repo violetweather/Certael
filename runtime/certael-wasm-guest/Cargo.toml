@@ -1,0 +1,13 @@
+[package]
+name = "certael-wasm-guest"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "no_std guest SDK for deterministic Certael WASM rules"
+
+[lib]
+crate-type = ["rlib"]
+
+[features]
+default = []

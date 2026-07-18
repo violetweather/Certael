@@ -1,0 +1,137 @@
+name: certael
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: certael
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres-password
+      POSTGRES_DB: certael
+    secrets: [postgres-password]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U certael -d certael"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes: ["postgres-data:/var/lib/postgresql/data"]
+
+  control-postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    profiles: ["multi-region"]
+    environment:
+      POSTGRES_USER: certael_coordinator
+      POSTGRES_PASSWORD_FILE: /run/secrets/coordinator-postgres-password
+      POSTGRES_DB: certael_control
+    secrets: [coordinator-postgres-password]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U certael_coordinator -d certael_control"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes: ["control-postgres-data:/var/lib/postgresql/data"]
+
+  redis:
+    image: redis:8-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes: ["redis-data:/data"]
+
+  nats:
+    image: nats:2.11-alpine
+    restart: unless-stopped
+    command: ["-js", "-sd", "/data"]
+    volumes: ["nats-data:/data"]
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:25-alpine
+    restart: unless-stopped
+    volumes: ["clickhouse-data:/var/lib/clickhouse"]
+
+  api:
+    image: ghcr.io/violetweather/certael-api:${CERTAEL_VERSION:?Set CERTAEL_VERSION to the release tag}
+    restart: unless-stopped
+    environment:
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__Postgres: ${CERTAEL_POSTGRES_CONNECTION_STRING:?Set CERTAEL_POSTGRES_CONNECTION_STRING}
+      ConnectionStrings__Redis: ${CERTAEL_REDIS_CONNECTION_STRING:-redis:6379,abortConnect=false}
+    ports: ["127.0.0.1:8080:8080"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_started }
+
+  event-worker:
+    image: ghcr.io/violetweather/certael-event-worker:${CERTAEL_VERSION:?Set CERTAEL_VERSION to the release tag}
+    restart: unless-stopped
+    environment:
+      ConnectionStrings__Postgres: ${CERTAEL_POSTGRES_CONNECTION_STRING:?Set CERTAEL_POSTGRES_CONNECTION_STRING}
+      Nats__Url: nats://nats:4222
+      EventWorker__AuthorizedTenants__0: ${CERTAEL_TENANT_ID:?Set CERTAEL_TENANT_ID}
+    depends_on:
+      postgres: { condition: service_healthy }
+      nats: { condition: service_started }
+
+  analytics-worker:
+    image: ghcr.io/violetweather/certael-analytics-worker:${CERTAEL_VERSION:?Set CERTAEL_VERSION to the release tag}
+    restart: unless-stopped
+    environment:
+      ConnectionStrings__Postgres: ${CERTAEL_POSTGRES_CONNECTION_STRING:?Set CERTAEL_POSTGRES_CONNECTION_STRING}
+      ConnectionStrings__Redis: ${CERTAEL_REDIS_CONNECTION_STRING:-redis:6379,abortConnect=false}
+      Nats__Url: nats://nats:4222
+      ClickHouse__Url: http://clickhouse:8123
+      ClickHouse__Database: default
+      AnalyticsWorker__ConsumerName: certael-clickhouse-v1
+      AnalyticsWorker__AuthorizedTenants__0: ${CERTAEL_TENANT_ID:?Set CERTAEL_TENANT_ID}
+    depends_on:
+      postgres: { condition: service_healthy }
+      nats: { condition: service_started }
+      clickhouse: { condition: service_started }
+      redis: { condition: service_started }
+
+  console:
+    image: ghcr.io/violetweather/certael-console:${CERTAEL_VERSION:?Set CERTAEL_VERSION to the release tag}
+    restart: unless-stopped
+    profiles: ["console"]
+    environment:
+      ASPNETCORE_URLS: http://+:8080
+      ASPNETCORE_FORWARDEDHEADERS_ENABLED: "true"
+      CERTAEL_CONSOLE_CONFIG: /run/certael/appsettings.Certael.json
+      Authentication__ClientSecret: ${CERTAEL_CONSOLE_OIDC_CLIENT_SECRET-}
+      TokenExchange__ClientSecret: ${CERTAEL_CONSOLE_EXCHANGE_CLIENT_SECRET-}
+      WorkloadIdentity__CertificatePath: /run/certael/${CERTAEL_CONSOLE_CERTIFICATE_FILE:-workload-development.pfx}
+    volumes:
+      - ${CERTAEL_CONSOLE_CONFIG_DIR:-./console-config}:/run/certael:ro
+    ports: ["127.0.0.1:8081:8080"]
+
+  coordinator:
+    image: ghcr.io/violetweather/certael-coordinator:${CERTAEL_VERSION:?Set CERTAEL_VERSION to the release tag}
+    restart: unless-stopped
+    profiles: ["multi-region"]
+    environment:
+      ASPNETCORE_URLS: https://+:8443
+      ASPNETCORE_Kestrel__Certificates__Default__Path: /run/certael/tls/${CERTAEL_COORDINATOR_SERVER_CERTIFICATE_FILE:?Set CERTAEL_COORDINATOR_SERVER_CERTIFICATE_FILE}
+      ASPNETCORE_Kestrel__Certificates__Default__Password:
+      ConnectionStrings__ControlPostgres: ${CERTAEL_COORDINATOR_POSTGRES_CONNECTION_STRING:?Set CERTAEL_COORDINATOR_POSTGRES_CONNECTION_STRING}
+      Coordinator__SigningKeyId: ${CERTAEL_COORDINATOR_SIGNING_KEY_ID:?Set CERTAEL_COORDINATOR_SIGNING_KEY_ID}
+      Coordinator__SigningPrivateKeyPkcs8Base64: ${CERTAEL_COORDINATOR_SIGNING_KEY_PKCS8:?Set CERTAEL_COORDINATOR_SIGNING_KEY_PKCS8}
+      Coordinator__ClientCaCertificatePath: /run/certael/tls/${CERTAEL_COORDINATOR_CLIENT_CA_FILE:?Set CERTAEL_COORDINATOR_CLIENT_CA_FILE}
+      Coordinator__FailoverCertificateThumbprints__0: ${CERTAEL_COORDINATOR_FAILOVER_CERTIFICATE_THUMBPRINT-}
+    volumes:
+      - ${CERTAEL_COORDINATOR_TLS_DIR:?Set CERTAEL_COORDINATOR_TLS_DIR}:/run/certael/tls:ro
+    ports: ["${CERTAEL_COORDINATOR_BIND_ADDRESS:-0.0.0.0}:8443:8443"]
+    depends_on:
+      control-postgres: { condition: service_healthy }
+
+volumes:
+  postgres-data:
+  control-postgres-data:
+  redis-data:
+  nats-data:
+  clickhouse-data:
+
+secrets:
+  postgres-password:
+    file: ${CERTAEL_POSTGRES_PASSWORD_FILE:-../../.certael/secrets/postgres-password}
+  coordinator-postgres-password:
+    file: ${CERTAEL_COORDINATOR_POSTGRES_PASSWORD_FILE:-../../.certael/secrets/coordinator-postgres-password}

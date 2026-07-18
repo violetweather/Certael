@@ -5,6 +5,17 @@ namespace Certael.Server.Tests;
 public sealed class ActionAuthorizerTests
 {
     [Fact]
+    public void SessionBindingDigestMatchesCrossLanguageGoldenVector()
+    {
+        var session = new SessionAuthorization("session-1", "tenant-a", "game-a", "prod",
+            "player-1", "match-1", "server-1", "build-1", DateTimeOffset.UtcNow.AddMinutes(5),
+            1, 100, new byte[32], SigningKeyId: "key-1",
+            ProtectionProfileId: "profile-1", ProtocolMinimum: 1, ProtocolMaximum: 2);
+        Assert.Equal("7a3136b6898ec120c6810a87ad1cdf73cf2ef2b633710c68983ff9f15988554c",
+            Convert.ToHexString(SessionBindingDigest.Compute(session)).ToLowerInvariant());
+    }
+
+    [Fact]
     public async Task RejectsCrossMatchAndReplay()
     {
         var session = new SessionAuthorization("s", "tenant", "game", "prod", "player", "match", "server", "build",
