@@ -43,7 +43,7 @@ services:
     environment:
       ASPNETCORE_URLS: http://+:8080
       ASPNETCORE_ENVIRONMENT: Development
-      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=certael;Username=certael;Password=${CERTAEL_DEV_POSTGRES_PASSWORD:?Set CERTAEL_DEV_POSTGRES_PASSWORD}
+      ConnectionStrings__Postgres: ${CERTAEL_DEV_POSTGRES_CONNECTION_STRING:?Set CERTAEL_DEV_POSTGRES_CONNECTION_STRING}
       ConnectionStrings__Redis: redis:6379,abortConnect=false
     ports: ["8080:8080"]
     depends_on:
@@ -53,7 +53,7 @@ services:
       context: ../..
       dockerfile: backend/Certael.EventWorker/Dockerfile
     environment:
-      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=certael;Username=certael;Password=${CERTAEL_DEV_POSTGRES_PASSWORD:?Set CERTAEL_DEV_POSTGRES_PASSWORD}
+      ConnectionStrings__Postgres: ${CERTAEL_DEV_POSTGRES_CONNECTION_STRING:?Set CERTAEL_DEV_POSTGRES_CONNECTION_STRING}
       Nats__Url: nats://nats:4222
       EventWorker__AuthorizedTenants__0: development
     depends_on:
@@ -64,7 +64,7 @@ services:
       context: ../..
       dockerfile: backend/Certael.AnalyticsWorker/Dockerfile
     environment:
-      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=certael;Username=certael;Password=${CERTAEL_DEV_POSTGRES_PASSWORD:?Set CERTAEL_DEV_POSTGRES_PASSWORD}
+      ConnectionStrings__Postgres: ${CERTAEL_DEV_POSTGRES_CONNECTION_STRING:?Set CERTAEL_DEV_POSTGRES_CONNECTION_STRING}
       ConnectionStrings__Redis: redis:6379,abortConnect=false
       Nats__Url: nats://nats:4222
       ClickHouse__Url: http://clickhouse:8123
@@ -84,7 +84,7 @@ services:
     environment:
       ASPNETCORE_URLS: http://+:8080
       ASPNETCORE_ENVIRONMENT: Development
-      ConnectionStrings__ControlPostgres: Host=control-postgres;Port=5432;Database=certael_control;Username=certael_coordinator;Password=${CERTAEL_COORDINATOR_POSTGRES_PASSWORD-}
+      ConnectionStrings__ControlPostgres: ${CERTAEL_COORDINATOR_POSTGRES_CONNECTION_STRING-}
       Coordinator__SigningKeyId: ${CERTAEL_COORDINATOR_SIGNING_KEY_ID:-development-transfer-key}
       Coordinator__SigningPrivateKeyPkcs8Base64: ${CERTAEL_COORDINATOR_SIGNING_KEY_PKCS8-}
       Coordinator__AllowInsecureDevelopment: "true"

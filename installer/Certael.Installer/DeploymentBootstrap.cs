@@ -36,9 +36,7 @@ public static class CertaelDeploymentBootstrap
         string environment = $"""
             CERTAEL_VERSION={request.ReleaseTag}
             CERTAEL_TENANT_ID={request.TenantId}
-            CERTAEL_POSTGRES_PASSWORD={postgresPassword}
             CERTAEL_POSTGRES_CONNECTION_STRING=Host=postgres;Port=5432;Database=certael;Username=certael;Password={postgresPassword}
-            CERTAEL_COORDINATOR_POSTGRES_PASSWORD={coordinatorPassword}
             CERTAEL_COORDINATOR_POSTGRES_CONNECTION_STRING=Host=control-postgres;Port=5432;Database=certael_control;Username=certael_coordinator;Password={coordinatorPassword}
             CERTAEL_COORDINATOR_SIGNING_KEY_ID={keyId}
             CERTAEL_COORDINATOR_SIGNING_KEY_PKCS8={coordinatorPrivateKey}
@@ -57,10 +55,11 @@ public static class CertaelDeploymentBootstrap
               docker compose --env-file .certael/deployment.env -f deployment/compose/docker-compose.release.yml ps
               curl --fail http://127.0.0.1:8080/healthz
 
-            The environment file contains database and coordinator private keys. Keep it out of
-            source control, backups without encryption, tickets, logs, and screenshots. Rotate the
-            generated development credentials before a production deployment and move secrets to
-            the platform's secret manager.
+            The environment file contains database connection strings and the coordinator private
+            key. PostgreSQL passwords are separate Docker secret files under `.certael/secrets`.
+            Keep all of them out of source control, backups without encryption, tickets, logs, and
+            screenshots. Rotate the generated development credentials before a production
+            deployment and move secrets to the platform's secret manager.
 
             The console profile remains disabled until OIDC and mTLS are configured. Run
             `certaelctl console init-auth0`, register its certificate, inject both Auth0 client
@@ -75,6 +74,13 @@ public static class CertaelDeploymentBootstrap
                 ".certael"),
             new WriteFileOperation("deployment-environment", "Write private deployment environment",
                 ".certael/deployment.env", Encoding.UTF8.GetBytes(environment), Private: true),
+            new WriteFileOperation("postgres-password", "Write private PostgreSQL secret",
+                ".certael/secrets/postgres-password", Encoding.UTF8.GetBytes(postgresPassword),
+                Private: true),
+            new WriteFileOperation("coordinator-postgres-password",
+                "Write private coordinator PostgreSQL secret",
+                ".certael/secrets/coordinator-postgres-password",
+                Encoding.UTF8.GetBytes(coordinatorPassword), Private: true),
             new WriteFileOperation("coordinator-public-key", "Write coordinator verification key",
                 ".certael/coordinator-public-key.pem", Encoding.UTF8.GetBytes(publicKey)),
             new WriteFileOperation("deployment-instructions", "Write deployment startup instructions",

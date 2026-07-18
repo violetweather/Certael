@@ -6,8 +6,9 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: certael
-      POSTGRES_PASSWORD: ${CERTAEL_POSTGRES_PASSWORD:?Set CERTAEL_POSTGRES_PASSWORD}
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres-password
       POSTGRES_DB: certael
+    secrets: [postgres-password]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U certael -d certael"]
       interval: 5s
@@ -21,8 +22,9 @@ services:
     profiles: ["multi-region"]
     environment:
       POSTGRES_USER: certael_coordinator
-      POSTGRES_PASSWORD: ${CERTAEL_COORDINATOR_POSTGRES_PASSWORD:?Set CERTAEL_COORDINATOR_POSTGRES_PASSWORD}
+      POSTGRES_PASSWORD_FILE: /run/secrets/coordinator-postgres-password
       POSTGRES_DB: certael_control
+    secrets: [coordinator-postgres-password]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U certael_coordinator -d certael_control"]
       interval: 5s
@@ -109,7 +111,7 @@ services:
     environment:
       ASPNETCORE_URLS: https://+:8443
       ASPNETCORE_Kestrel__Certificates__Default__Path: /run/certael/tls/${CERTAEL_COORDINATOR_SERVER_CERTIFICATE_FILE:?Set CERTAEL_COORDINATOR_SERVER_CERTIFICATE_FILE}
-      ASPNETCORE_Kestrel__Certificates__Default__Password: ${CERTAEL_COORDINATOR_SERVER_CERTIFICATE_PASSWORD:?Set CERTAEL_COORDINATOR_SERVER_CERTIFICATE_PASSWORD}
+      ASPNETCORE_Kestrel__Certificates__Default__Password:
       ConnectionStrings__ControlPostgres: ${CERTAEL_COORDINATOR_POSTGRES_CONNECTION_STRING:?Set CERTAEL_COORDINATOR_POSTGRES_CONNECTION_STRING}
       Coordinator__SigningKeyId: ${CERTAEL_COORDINATOR_SIGNING_KEY_ID:?Set CERTAEL_COORDINATOR_SIGNING_KEY_ID}
       Coordinator__SigningPrivateKeyPkcs8Base64: ${CERTAEL_COORDINATOR_SIGNING_KEY_PKCS8:?Set CERTAEL_COORDINATOR_SIGNING_KEY_PKCS8}
@@ -127,3 +129,9 @@ volumes:
   redis-data:
   nats-data:
   clickhouse-data:
+
+secrets:
+  postgres-password:
+    file: ${CERTAEL_POSTGRES_PASSWORD_FILE:-../../.certael/secrets/postgres-password}
+  coordinator-postgres-password:
+    file: ${CERTAEL_COORDINATOR_POSTGRES_PASSWORD_FILE:-../../.certael/secrets/coordinator-postgres-password}

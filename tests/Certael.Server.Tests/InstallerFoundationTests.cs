@@ -96,14 +96,22 @@ public sealed class InstallerFoundationTests
                 .ToDictionary(parts => parts[0], parts => parts[1], StringComparer.Ordinal);
             Assert.Equal("v0.4.0-alpha.2", values["CERTAEL_VERSION"]);
             Assert.Equal("tenant-a", values["CERTAEL_TENANT_ID"]);
-            Assert.Equal(64, values["CERTAEL_POSTGRES_PASSWORD"].Length);
-            Assert.NotEqual(values["CERTAEL_POSTGRES_PASSWORD"],
-                values["CERTAEL_COORDINATOR_POSTGRES_PASSWORD"]);
+            string postgresPassword = await File.ReadAllTextAsync(Path.Combine(root,
+                ".certael", "secrets", "postgres-password"),
+                TestContext.Current.CancellationToken);
+            string coordinatorPassword = await File.ReadAllTextAsync(Path.Combine(root,
+                ".certael", "secrets", "coordinator-postgres-password"),
+                TestContext.Current.CancellationToken);
+            Assert.Equal(64, postgresPassword.Length);
+            Assert.NotEqual(postgresPassword, coordinatorPassword);
+            Assert.DoesNotContain("CERTAEL_POSTGRES_PASSWORD=", environment,
+                StringComparison.Ordinal);
+            Assert.Contains(postgresPassword, values["CERTAEL_POSTGRES_CONNECTION_STRING"],
+                StringComparison.Ordinal);
             using ECDsa key = ECDsa.Create();
             key.ImportPkcs8PrivateKey(Convert.FromBase64String(
                 values["CERTAEL_COORDINATOR_SIGNING_KEY_PKCS8"]), out _);
-            Assert.DoesNotContain(values["CERTAEL_POSTGRES_PASSWORD"], stdout.ToString(),
-                StringComparison.Ordinal);
+            Assert.DoesNotContain(postgresPassword, stdout.ToString(), StringComparison.Ordinal);
             Assert.DoesNotContain(values["CERTAEL_COORDINATOR_SIGNING_KEY_PKCS8"],
                 stdout.ToString(), StringComparison.Ordinal);
             Assert.True(File.Exists(Path.Combine(root, ".certael", "DEPLOYMENT.md")));
