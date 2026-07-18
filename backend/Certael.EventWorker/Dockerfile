@@ -1,8 +1,8 @@
-FROM mcr.microsoft.com/dotnet/sdk:10.0@sha256:ea8bde36c11b6e7eec2656d0e59101d4462f6bd630730f2c8201ed0572b295d5 AS build
+FROM mcr.microsoft.com/dotnet/sdk:10.0@sha256:ed034a8bf0b24ded0cbbac07e17825d8e9ebfe21e308191d0f7421eaf5ad4664 AS build
 WORKDIR /src
 COPY . .
 RUN dotnet publish backend/Certael.EventWorker/Certael.EventWorker.csproj -c Release -o /out
-FROM mcr.microsoft.com/dotnet/runtime:10.0@sha256:8c805532821f1cdea2cf3b74fd3e89dfd14e5de16c021af2d9e418377b0c5247
+FROM mcr.microsoft.com/dotnet/runtime:10.0@sha256:ed5d539b27842d656a06a5984dbcb5114d3e885fbada612a49a5a7c3c3a44e1c
 ARG SOURCE_REVISION=unknown
 LABEL org.opencontainers.image.source="https://github.com/violetweather/Certael" \
       org.opencontainers.image.revision="$SOURCE_REVISION" \

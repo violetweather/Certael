@@ -32,6 +32,10 @@ All notable changes to Certael Core are documented here. Certael follows semanti
 - Database changes are additive through migration `025`; coordinator migrations remain isolated in its control database.
 - Agent `v0.4.0-alpha.1` is the recommended compatible Agent release and is pinned by immutable source commit in release artifacts.
 
+### Fixed
+
+- Refreshed the immutable .NET 10 SDK, ASP.NET, and runtime container manifest pins so every multi-architecture release image resolves from Microsoft Container Registry.
+
 ## [0.4.0-alpha.1] - 2026-07-17
 
 ### Added
