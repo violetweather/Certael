@@ -202,7 +202,7 @@ public sealed class CoordinatorStore(NpgsqlDataSource dataSource)
             if (!await reader.ReadAsync(cancellationToken)
                 || !StoredGrantMatches(reader, grant, signed) || !reader.IsDBNull(12)
                 || reader.GetFieldValue<DateTimeOffset>(11) <= now)
-            { await transaction.RollbackAsync(cancellationToken); return null; }
+                return null;
         }
         const string selectLease = """
             SELECT owner_region,fencing_epoch,expires_at,released_at
@@ -218,7 +218,7 @@ public sealed class CoordinatorStore(NpgsqlDataSource dataSource)
                 || reader.GetString(0) != grant.SourceRegion
                 || reader.GetInt64(1) != grant.LeaseEpoch
                 || reader.IsDBNull(3) && reader.GetFieldValue<DateTimeOffset>(2) > now)
-            { await transaction.RollbackAsync(cancellationToken); return null; }
+                return null;
         }
         long nextEpoch = checked(grant.LeaseEpoch + 1);
         DateTimeOffset nextExpiry = now.AddSeconds(30);
@@ -301,8 +301,14 @@ public sealed class CoordinatorStore(NpgsqlDataSource dataSource)
         NpgsqlTransaction transaction, CancellationToken cancellationToken)
     {
         await using var command = new NpgsqlCommand("SELECT clock_timestamp()", connection, transaction);
-        return (DateTimeOffset)(await command.ExecuteScalarAsync(cancellationToken)
-            ?? throw new InvalidOperationException("Control database time is unavailable."));
+        object value = await command.ExecuteScalarAsync(cancellationToken)
+            ?? throw new InvalidOperationException("Control database time is unavailable.");
+        return value switch
+        {
+            DateTimeOffset timestamp => timestamp,
+            DateTime timestamp => new DateTimeOffset(DateTime.SpecifyKind(timestamp, DateTimeKind.Utc)),
+            _ => throw new InvalidOperationException("Control database returned an invalid timestamp.")
+        };
     }
     private static async ValueTask Audit(NpgsqlConnection connection,
         NpgsqlTransaction transaction, string tenant, string game, string environment,
