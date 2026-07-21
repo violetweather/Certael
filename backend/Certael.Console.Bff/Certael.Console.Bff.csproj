@@ -5,7 +5,7 @@
     <ConsoleRoot>$(MSBuildProjectDirectory)\..\..\console</ConsoleRoot>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" Version="10.0.3" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" Version="10.0.10" />
   </ItemGroup>
   <Target Name="BuildConsoleAssets" AfterTargets="ComputeFilesToPublish"
           Condition="'$(BuildConsole)' != 'false'">
