@@ -11,9 +11,9 @@ jobs:
   typescript:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with: { persist-credentials: false }
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with: { node-version: 22 }
       - run: corepack enable
       - run: pnpm install --frozen-lockfile && pnpm run build && pnpm run test
@@ -30,7 +30,7 @@ jobs:
             npm --prefix "$package" version "$version" --no-git-tag-version --allow-same-version
           done
           pnpm pack --pack-destination ../../artifacts
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with: { name: certael-typescript, path: artifacts, if-no-files-found: error }
 
   native:
@@ -68,10 +68,10 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with: { persist-credentials: false }
       - name: Check out pinned Certael Agent probe source
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: violetweather/Certael-Agent
           ref: 7c52071f3e4df15bf835744ffe2628b3f7620e54
@@ -81,7 +81,7 @@ jobs:
         with:
           toolchain: 1.97.0
           targets: ${{ matrix.target }}
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with: { node-version: 22 }
       - run: cargo build --locked --release -p certael-c-api --target ${{ matrix.target }}
       - run: cargo build --locked --release -p certael-node --target ${{ matrix.target }}
@@ -147,9 +147,9 @@ jobs:
           fi
           node -e 'const addon=require(require("node:path").resolve(process.argv[1])); if(addon.certaelNodeAbiVersion()!==2||typeof addon.verifyActionEnvelope!=="function"||typeof addon.evaluateWasmRule!=="function") throw new Error("invalid Certael Node ABI")' \
             "artifacts/certael-native-${{ matrix.artifact }}/lib/certael_node.node"
-      - uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661
+      - uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a
         with: { subject-path: "artifacts/certael-native-${{ matrix.artifact }}/**" }
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: certael-native-${{ matrix.artifact }}
           path: artifacts/certael-native-${{ matrix.artifact }}
@@ -162,9 +162,9 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with: { persist-credentials: false }
-      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
         with: { dotnet-version: 10.0.x }
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
         with:
@@ -189,15 +189,15 @@ jobs:
       - run: |
           dotnet tool install Microsoft.Sbom.DotNetTool --version 4.1.5 --tool-path .tools
           .tools/sbom-tool generate -b artifacts -bc . -pn Certael -pv "${GITHUB_REF_NAME#v}" -ps Certael -nsb "https://github.com/${GITHUB_REPOSITORY}"
-      - uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661
+      - uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a
         with: { subject-path: "artifacts/**" }
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with: { name: certael-managed, path: artifacts, if-no-files-found: error }
 
   wasm-rules:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with: { persist-credentials: false }
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
         with:
@@ -221,7 +221,7 @@ jobs:
           cp LICENSE "$root/LICENSE"
           printf '%s\n' "$GITHUB_SHA" > "$root/SOURCE_COMMIT"
           (cd artifacts && zip -qr "certael-wasm-guest-${GITHUB_REF_NAME}.zip" "certael-wasm-${GITHUB_REF_NAME}")
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: certael-wasm
           path: artifacts/certael-wasm-guest-${{ github.ref_name }}.zip
@@ -231,14 +231,14 @@ jobs:
     needs: [typescript]
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with: { persist-credentials: false }
-      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
         with: { dotnet-version: 10.0.x }
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with: { node-version: 22 }
       - run: corepack enable
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with: { name: certael-typescript, path: suite-input/typescript }
       - name: Assemble installer-ready managed components
         shell: pwsh
@@ -251,7 +251,7 @@ jobs:
             -Version $version `
             -OutputRoot suite-release `
             -TypeScriptPackage $package.FullName
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: certael-suite-managed
           path: suite-release/*.zip
@@ -276,9 +276,9 @@ jobs:
             archive: certael-setup-osx-x64
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with: { persist-credentials: false }
-      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
         with: { dotnet-version: 10.0.x }
       - name: Publish self-contained setup application
         run: >-
@@ -305,7 +305,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: Compress-Archive -Path setup-publish/* -DestinationPath "${{ matrix.archive }}-${{ github.ref_name }}.zip"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: ${{ matrix.archive }}
           path: certael-setup-*
@@ -338,10 +338,10 @@ jobs:
             artifact: macos-x86_64
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with: { persist-credentials: false }
       - name: Check out pinned Certael Agent probe source
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: violetweather/Certael-Agent
           ref: 7c52071f3e4df15bf835744ffe2628b3f7620e54
@@ -431,7 +431,7 @@ jobs:
           finally {
             Pop-Location
           }
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: certael-godot-${{ matrix.artifact }}
           path: engines/godot/addons/certael/bin
@@ -459,13 +459,13 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with: { persist-credentials: false }
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f
         with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
       - id: build
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a
         with:
           context: .
           file: ${{ matrix.dockerfile }}
@@ -475,7 +475,7 @@ jobs:
           build-args: SOURCE_REVISION=${{ github.sha }}
           provenance: mode=max
           sbom: true
-      - uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661
+      - uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a
         with:
           subject-name: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
           subject-digest: ${{ steps.build.outputs.digest }}
@@ -493,14 +493,14 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with: { persist-credentials: false }
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           pattern: certael-setup-*
           path: downloaded/setup-desktop
           merge-multiple: true
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           pattern: certael-*
           path: downloaded
@@ -611,7 +611,7 @@ jobs:
             name="$(basename "$directory")"
             tar -C "$directory" -czf "release/${name}-${GITHUB_REF_NAME}.tar.gz" .
           done
-      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
         with: { dotnet-version: 10.0.x }
       - name: Assemble and sign canonical suite manifest
         env:
@@ -659,7 +659,7 @@ jobs:
           for artifact in release/*; do
             cosign sign-blob --yes --bundle "${artifact}.sigstore.json" "$artifact"
           done
-      - uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661
+      - uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a
         with: { subject-path: "release/**" }
       - name: Publish pre-release
         env: { GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
