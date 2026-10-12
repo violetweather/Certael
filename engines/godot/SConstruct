@@ -24,7 +24,15 @@ if not os.path.isfile(native_file):
 if env["platform"] == "windows":
     env.Append(LIBS=[env.File(native_file)])
 else:
-    env.Append(LIBPATH=[native_dir], LIBS=["certael_c_api"])
+    # Link the static archive by path. -lcertael_c_api would prefer the
+    # cdylib that shares the release directory and bake its absolute
+    # build-machine path into the extension; the static archive keeps the
+    # extension self-contained on every Unix target.
+    env.Append(LIBS=[env.File(native_file)])
+    if env["platform"] == "linux":
+        # The archive's system dependencies must be repeated here; macOS
+        # needs nothing beyond the driver's libc++/libSystem defaults.
+        env.Append(LIBS=["dl", "pthread", "m"])
 library = env.SharedLibrary(
     "addons/certael/bin/certael{}{}".format(env["suffix"], env["SHLIBSUFFIX"]),
     source=sources,
