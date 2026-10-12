@@ -3,7 +3,7 @@
   <ItemGroup>
     <ProjectReference Include="../../server-sdk/Certael.Server/Certael.Server.csproj" />
     <PackageReference Include="Npgsql" Version="10.0.3" />
-    <PackageReference Include="StackExchange.Redis" Version="3.0.17" />
+    <PackageReference Include="StackExchange.Redis" Version="3.4.0" />
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="Migrations/*.sql" />
