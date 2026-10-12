@@ -71,7 +71,7 @@ dependencies = [
 
 [[package]]
 name = "certael-c-api"
-version = "0.4.0-alpha.2"
+version = "0.4.0-alpha.3"
 dependencies = [
  "certael-core",
  "uuid",
@@ -79,7 +79,7 @@ dependencies = [
 
 [[package]]
 name = "certael-core"
-version = "0.4.0-alpha.2"
+version = "0.4.0-alpha.3"
 dependencies = [
  "ed25519-dalek",
  "rand_core",
@@ -92,7 +92,7 @@ dependencies = [
 
 [[package]]
 name = "certael-load"
-version = "0.4.0-alpha.2"
+version = "0.4.0-alpha.3"
 dependencies = [
  "certael-core",
  "ed25519-dalek",
@@ -101,7 +101,7 @@ dependencies = [
 
 [[package]]
 name = "certael-node"
-version = "0.4.0-alpha.2"
+version = "0.4.0-alpha.3"
 dependencies = [
  "certael-core",
  "certael-wasm",
@@ -111,14 +111,14 @@ dependencies = [
 
 [[package]]
 name = "certael-reference-repeated-reward-rule"
-version = "0.4.0-alpha.2"
+version = "0.4.0-alpha.3"
 dependencies = [
  "certael-wasm-guest",
 ]
 
 [[package]]
 name = "certael-wasm"
-version = "0.4.0-alpha.2"
+version = "0.4.0-alpha.3"
 dependencies = [
  "sha2",
  "thiserror",
@@ -129,14 +129,14 @@ dependencies = [
 
 [[package]]
 name = "certael-wasm-check"
-version = "0.4.0-alpha.2"
+version = "0.4.0-alpha.3"
 dependencies = [
  "certael-wasm",
 ]
 
 [[package]]
 name = "certael-wasm-guest"
-version = "0.4.0-alpha.2"
+version = "0.4.0-alpha.3"
 
 [[package]]
 name = "cfg-if"

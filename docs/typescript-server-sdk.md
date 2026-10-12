@@ -11,7 +11,7 @@ client or engine project.
 
 ## Status and boundaries
 
-The current package version is `0.4.0-alpha.2`.
+The current package version is `0.4.0-alpha.3`.
 
 It provides:
 
@@ -56,8 +56,8 @@ Verify both packages before installation. Install the main package and the exact
 native package together when using GitHub release files:
 
 ```bash
-pnpm add ./vendor/certael-server-0.4.0-alpha.2.tgz \
-  ./vendor/certael-server-linux-x64-0.4.0-alpha.2.tgz
+pnpm add ./vendor/certael-server-0.4.0-alpha.3.tgz \
+  ./vendor/certael-server-linux-x64-0.4.0-alpha.3.tgz
 ```
 
 The main package declares all four native packages as exact optional

@@ -1,6 +1,6 @@
 {
   "name": "@certael/server-darwin-x64",
-  "version": "0.4.0-alpha.2",
+  "version": "0.4.0-alpha.3",
   "description": "Certael native verifier for macOS x64",
   "license": "Apache-2.0",
   "os": ["darwin"],

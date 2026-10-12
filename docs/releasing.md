@@ -18,8 +18,8 @@ Before tagging, all required checks must pass on the exact commit. Create a
 signed tag and push it:
 
 ```bash
-git tag -s v0.4.0-alpha.2 -m "Certael v0.4.0-alpha.2"
-git push origin v0.4.0-alpha.2
+git tag -s v0.4.0-alpha.3 -m "Certael v0.4.0-alpha.3"
+git push origin v0.4.0-alpha.3
 ```
 
 The workflow publishes a GitHub pre-release. Stable `v1.*` promotion remains
