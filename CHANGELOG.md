@@ -2,6 +2,20 @@
 
 All notable changes to Certael Core are documented here. Certael follows semantic versioning for public contracts; prerelease APIs may evolve only through explicit versioned contracts and feature flags.
 
+## [0.4.0-alpha.3] - 2026-10-12
+
+### Fixed
+
+- The Godot adapter now links the static C API archive on Linux and macOS, so the extension no longer depends on an unshipped `libcertael_c_api` shared library or a build-machine path (#77).
+
+### Security
+
+- Wasmtime is updated from 36.0.12 to 36.0.17, fixing RUSTSEC-2026-0269 (filesystem sandbox escape), RUSTSEC-2026-0222, and RUSTSEC-2026-0316 (#78).
+
+### Compatibility
+
+- No protocol, ABI, or database changes. The pinned Agent source commit is unchanged.
+
 ## [0.4.0-alpha.2] - 2026-07-18
 
 ### Added
@@ -67,5 +81,6 @@ All notable changes to Certael Core are documented here. Certael follows semanti
 
 - Certael still has no permanent-ban capability. Automated analysis creates explainable findings; signed policy thresholds open cases; operators approve only bounded actions. Game state, bans, appeals, and external moderation remain owned by the integrating game.
 
+[0.4.0-alpha.3]: https://github.com/violetweather/Certael/compare/v0.4.0-alpha.2...v0.4.0-alpha.3
 [0.4.0-alpha.2]: https://github.com/violetweather/Certael/compare/v0.4.0-alpha.1...v0.4.0-alpha.2
 [0.4.0-alpha.1]: https://github.com/violetweather/Certael/compare/v0.3.0-alpha.2...v0.4.0-alpha.1

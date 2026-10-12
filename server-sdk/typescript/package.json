@@ -1,6 +1,6 @@
 {
   "name": "@certael/server",
-  "version": "0.4.0-alpha.2",
+  "version": "0.4.0-alpha.3",
   "description": "Authoritative Node.js server SDK for Certael",
   "type": "module",
   "engines": { "node": ">=22" },
